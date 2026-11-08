@@ -4,5 +4,5 @@
 // NEVER paste the "service_role" / secret key here.
 window.WT_CONFIG = {
   supabaseUrl: "https://gitrtnnpmouqulgdejtd.supabase.co",
-  supabaseAnonKey: "PASTE_YOUR_ANON_PUBLIC_KEY_HERE"
+  supabaseAnonKey: "sb_publishable_P05ZCCSu-o17dbP6DC8spQ_NmXtFwQG"
 };
