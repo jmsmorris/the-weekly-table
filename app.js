@@ -730,8 +730,95 @@ function classifyImport(name,ings){
   var dairy=countMatches(text.replace(NOT_DAIRY,' '),DAIRY_RE);
   var bad=text.match(NOT_KOSHER_RE);
   var cat=meat&&!dairy?'meat':dairy&&!meat?'dairy':(meat&&dairy?(meat>=dairy?'meat':'dairy'):'pareve');
-  return {category:cat,mixed:!!(meat&&dairy),notKosher:bad?Array.from(new Set(bad)):[]};
+  return {category:cat,mixed:!!(meat&&dairy),meat:meat,dairy:dairy,notKosher:bad?Array.from(new Set(bad)):[]};
 }
+/* Simple swaps that make an imported recipe kosher. Each rule: what to look for, what to say, what to use instead.
+   Rules run in order and use up what they match, so "buttermilk" is not also counted as "butter" or "milk". */
+var FIX_BROTH={re:/\b(?:chicken|beef|turkey|meat|bone)\s+(?:broth|stock|bouillon|consomm[eé])\b/g,what:'meat broth',use:'vegetable broth'};
+var FIX_BAD=[ // not kosher at all; "meat" is used when the dish stays meat or pareve, "plain" when it will be served with dairy
+  {re:/\bpork sausages?\b|\bsausages? \(pork\)/g,what:'pork sausage',meat:'kosher beef or chicken sausage',plain:'plant-based sausage'},
+  {re:/\bground pork\b|\bpork (?:chops?|loin|shoulder|tenderloin|belly|roast|ribs?)\b|\bpork\b/g,what:'pork',meat:'chicken, turkey or beef (brisket suits pulled pork)',plain:'seitan or jackfruit'},
+  {re:/\bbacon\b/g,what:'bacon',meat:'kosher beef or turkey bacon',plain:'plant-based bacon or smoked tofu'},
+  {re:/\bham\b/g,what:'ham',meat:'kosher deli turkey or smoked turkey',plain:'smoked tofu or mushrooms'},
+  {re:/\b(?:prosciutto|pancetta)\b/g,what:null,meat:'kosher beef bacon or smoked turkey',plain:'thin-sliced mushrooms or smoked tofu'},
+  {re:/\bchorizo\b/g,what:'chorizo',meat:'kosher beef sausage or merguez',plain:'plant-based chorizo or sausage'},
+  {re:/\blard\b/g,what:'lard',meat:'vegetable shortening or oil',plain:'vegetable shortening or oil'},
+  {re:/\b(?:shrimp|prawns?|lobster|crab|scallops?|clams?|oysters?|mussels?|squid|calamari)\b/g,what:null,meat:'a firm kosher fish such as cod, salmon or tilapia (or hearts of palm or mushrooms)',plain:'a firm kosher fish such as cod, salmon or tilapia (or hearts of palm or mushrooms)'},
+  {re:/\bgelatin\b/g,what:'gelatin',meat:'kosher-certified gelatin or agar-agar',plain:'kosher-certified gelatin or agar-agar'}
+];
+var FIX_DAIRY=[ // keep it a meat dish: replace the dairy with a pareve version
+  {re:/\bcream of \w+ soup\b|\bcondensed cream soup\b/g,what:null,use:'a pareve condensed soup, or a quick white sauce of margarine, flour, plant milk and broth'},
+  {re:/\bbuttermilk\b/g,what:'buttermilk',use:'plant milk soured with 1 tbsp lemon juice or vinegar per cup'},
+  {re:/\bsour cream\b/g,what:'sour cream',use:'non-dairy sour cream or plain plant-based yogurt'},
+  {re:/\bcream cheese\b|\bmascarpone\b/g,what:null,use:'non-dairy cream cheese'},
+  {re:/\bcottage cheese\b|\bricotta\b/g,what:null,use:'crumbled firm tofu with a little lemon juice and salt'},
+  {re:/\b(?:heavy|whipping|double|light|single)? ?cream\b|\bhalf-and-half\b/g,what:'cream',use:'non-dairy cream, oat cream or full-fat coconut cream'},
+  {re:/\byogh?urt\b/g,what:null,use:'plain plant-based (soy or coconut) yogurt'},
+  {re:/\b(?:ghee|butter)\b/g,what:null,use:'margarine or a neutral oil'},
+  {re:/\bparmigiano(?:[- ]reggiano)?\b|\bparmesan\b/g,what:null,use:'nutritional yeast, or a dairy-free parmesan'},
+  {re:/\bpaneer\b|\bhalloumi\b/g,what:null,use:'firm tofu'},
+  {re:/\b(?:mozzarella|cheddar|swiss|provolone|gouda|gruy[eè]re|brie|feta|monterey jack|jack|pepper jack|colby|havarti|cheese)\b/g,what:null,use:'dairy-free cheese (shreds melt best)'},
+  {re:/\bmilk\b/g,what:'milk',use:'unsweetened soy, oat or almond milk'},
+  {re:/\bwhey\b/g,what:'whey',use:'leave it out'}
+];
+var FIX_MEAT=[ // keep it a dairy dish: replace the meat with a plant-based version
+  FIX_BROTH,
+  {re:/\bground (?:beef|turkey|chicken|lamb|meat)\b/g,what:null,use:'kosher-certified plant-based ground “meat” (such as Impossible or Beyond)'},
+  {re:/\b(?:sausages?|hot ?dogs?)\b/g,what:null,use:'plant-based sausages'},
+  {re:/\bmeatballs?\b|\bmeatloaf\b/g,what:null,use:'plant-based meatballs, or a lentil and walnut mix'},
+  {re:/\b(?:pastrami|salami|bologna)\b/g,what:null,use:'plant-based deli slices'},
+  {re:/\b(?:chicken|turkey|duck|cutlets?|schnitzel|drumsticks?)\b/g,what:null,use:'extra-firm tofu, chickpeas or seitan'},
+  {re:/\b(?:beef|steak|brisket|chuck|flanken|short ribs?|ribs?|lamb|veal)\b/g,what:null,use:'seitan or portobello mushrooms'}
+];
+function kosherFixes(name,ings,cls){
+  var work=ings.map(function(l){return {orig:String(l),low:String(l).toLowerCase().replace(NOT_DAIRY,' ')};});
+  var clone=function(w){return w.map(function(x){return {orig:x.orig,low:x.low};});};
+  function scan(w,rules,pick){
+    var res=[];
+    rules.forEach(function(r){
+      var hit=null;
+      w.forEach(function(x){
+        var m=x.low.match(r.re);if(!m)return;
+        x.low=x.low.replace(r.re,' ');
+        if(!hit)hit={what:r.what||m[0],use:pick(r),lines:[]};
+        hit.lines.push(x.orig);
+      });
+      if(hit)res.push(hit);
+    });
+    return res;
+  }
+  // 1. things that are never kosher (found once, so the later scans don't count them again)
+  var bad=[];
+  FIX_BAD.forEach(function(r){bad=bad.concat(scan(work,[r],function(){return null;})).map(function(h){h.rule=h.rule||r;return h;});});
+  var dairyStays=cls.dairy>0&&cls.category!=='meat';
+  var asMeat=function(h){return {what:h.what,lines:h.lines,use:h.rule.meat};};
+  var asPlain=function(h){return {what:h.what,lines:h.lines,use:h.rule.plain};};
+  var out={common:[],meat:[],dairy:[]};
+  if(!cls.mixed){
+    out.common=bad.map(dairyStays?asPlain:asMeat);
+    return out;
+  }
+  // 2. meat and dairy together: offer both ways out
+  bad.forEach(function(h){
+    if(h.rule.meat===h.rule.plain)out.common.push(asMeat(h));
+    else{out.meat.push(asMeat(h));out.dairy.push(asPlain(h));}
+  });
+  out.meat=out.meat.concat(scan(clone(work),FIX_DAIRY,function(r){return r.use;}));
+  out.dairy=out.dairy.concat(scan(clone(work),FIX_MEAT,function(r){return r.use;}));
+  return out;
+}
+function fixesHtml(f){
+  if(!f.common.length&&!f.meat.length&&!f.dairy.length)return '';
+  var short=function(l){l=l.length>60?l.slice(0,57)+'…':l;return '“'+esc(l)+'”';};
+  var list=function(a){return '<ul>'+a.map(function(x){
+    return '<li>Swap the <b>'+esc(x.what)+'</b> ('+short(x.lines[0])+(x.lines.length>1?' and '+(x.lines.length-1)+' more':'')+') for '+esc(x.use)+'.</li>';
+  }).join('')+'</ul>';};
+  var h='<span class="fixes"><strong>Simple swaps to make it kosher</strong>'+(f.common.length?list(f.common):'');
+  if(f.meat.length)h+='<em>To keep it a meat dish, swap the dairy:</em>'+list(f.meat);
+  if(f.dairy.length)h+='<em>Or, to keep it a dairy dish, swap the meat:</em>'+list(f.dairy);
+  return h+'<small>Look for a pareve (kosher-certified) label on substitutes such as margarine, plant milk and plant-based meat. If the steps mention the swapped items, update them too.</small></span>';
+}
+window.__wtKosherFixes=kosherFixes;
 function guessStyle(text){
   var t=String(text||'').toLowerCase();
   if(/slow[- ]cooker|crock ?pot/.test(t))return 'slow-cooker';
@@ -767,7 +854,8 @@ async function runImport(){
     var notes=['Imported from '+esc(j.source||'the page')+'. Check the category and edit anything before saving.'];
     if(cls.mixed)notes.push('This recipe appears to mix meat and dairy, so it isn’t kosher as written. Adjust it before saving.');
     if(cls.notKosher.length)notes.push('It mentions '+esc(cls.notKosher.join(', '))+', which isn’t kosher.');
-    msg.innerHTML=notes.join(' ');msg.className='imp-msg'+((cls.mixed||cls.notKosher.length)?' bad':'');msg.hidden=false;
+    var fixes=(cls.mixed||cls.notKosher.length)?fixesHtml(kosherFixes(j.name,ings,cls)):'';
+    msg.innerHTML=notes.join(' ')+fixes;msg.className='imp-msg'+((cls.mixed||cls.notKosher.length)?' bad':'');msg.hidden=false;
   }catch(e){
     msg.textContent=e.notDeployed?'Link import isn’t set up yet (README, step 4). You can still paste a recipe into the form below.':(e.message||'Couldn’t import that link.');
     msg.className='imp-msg bad';msg.hidden=false;
@@ -780,7 +868,7 @@ function openAdd(){
   openModal(mhead('Save a recipe')+
   '<div class="form">'+
   '<div class="import-box"><label class="field"><span>Import from a link</span><div class="join-row"><input id="fUrl" class="search" type="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="https://…"><button class="btn-ghost" id="impBtn" data-action="import-url">Import</button></div></label>'+
-  '<p id="impMsg" class="imp-msg" hidden></p></div>'+
+  '<div id="impMsg" class="imp-msg" hidden></div></div>'+
   '<p class="or-line" style="margin:0">or enter it yourself</p>'+
   '<label class="field"><span>Recipe name</span><input id="fName" placeholder="e.g. Grandma’s brisket"></label>'+
   '<div class="two"><label class="field"><span>Category</span><select id="fCat"><option value="meat">Meat</option><option value="dairy" selected>Dairy</option><option value="pareve">Pareve</option></select></label>'+
