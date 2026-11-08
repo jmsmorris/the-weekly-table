@@ -4,5 +4,7 @@
 // NEVER paste the "service_role" / secret key here.
 window.WT_CONFIG = {
   supabaseUrl: "https://gitrtnnpmouqulgdejtd.supabase.co",
-  supabaseAnonKey: "sb_publishable_P05ZCCSu-o17dbP6DC8spQ_NmXtFwQG"
+  supabaseAnonKey: "sb_publishable_P05ZCCSu-o17dbP6DC8spQ_NmXtFwQG",
+  // URL slug of the deployed import-recipe edge function (the dashboard named it).
+  importFunction: "rapid-action"
 };
