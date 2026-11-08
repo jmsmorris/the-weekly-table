@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Weekly Table</title>
+<meta name="description" content="A shared kosher weekly dinner planner that follows the weather.">
+<meta name="theme-color" content="#20301F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Weekly Table">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="head">
+  <div class="head-in">
+    <p class="eyebrow">Kosher · easy · toddler-approved</p>
+    <h1 class="title">The Weekly Table</h1>
+    <p class="sub">A shared dinner plan for a family of three. Menus follow the week’s weather, Friday is always a Shabbat-style meat-and-veggies dinner, meat is capped at three nights, and nothing repeats inside four weeks.</p>
+    <div class="controls" id="controls"></div>
+    <div class="hint" id="hint"></div>
+  </div>
+</header>
+
+<main>
+  <div id="banner"></div>
+  <section id="week"></section>
+
+  <section class="box" id="boxSection" hidden>
+    <div class="box-head">
+      <h2 class="h2">Recipe box <span class="mono" id="boxCount" style="font-size:12px;color:var(--soft)"></span></h2>
+      <button class="btn-ghost" id="addBtn" data-action="add-open">＋ Save a recipe</button>
+    </div>
+    <div class="box-controls">
+      <input class="search" id="q" type="search" placeholder="Search recipes or ingredients" aria-label="Search recipes">
+      <div class="chips" id="chips"></div>
+    </div>
+    <div id="boxList"></div>
+  </section>
+</main>
+
+<div id="modal"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
