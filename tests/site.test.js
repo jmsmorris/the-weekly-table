@@ -163,6 +163,17 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  // 11. shopping list + removal of a custom recipe
  a.querySelector('[data-action=export]').click();
  ok(a.getElementById('listText').value.includes('ALL INGREDIENTS'),'shopping list builds');
+{ const M=A.__wtMergeIngredients,has=(l,t)=>M(l).includes(t);
+  ok(has(['2 eggs','3 eggs, beaten'],'5 eggs'),'shopping list adds 2 eggs + 3 eggs = 5 eggs');
+  ok(has(['1 onion, diced','1 onion, 2 carrots, diced','3 onions, sliced'],'5 onions')&&has(['1 onion, 2 carrots, diced'],'2 carrots'),'combined lines are split and prep notes dropped');
+  ok(has(['2 cloves garlic, minced','1 clove garlic'],'3 cloves garlic'),'units are matched across singular and plural');
+  ok(has(['1 can (28 oz) crushed tomatoes','1 can (28 oz) crushed tomatoes'],'2 cans (28 oz) crushed tomatoes'),'can sizes are kept');
+  ok(has(['2 tbsp olive oil, salt, pepper','3 tbsp olive oil','1/4 cup olive oil'],'Olive oil: 1/2 cup + 1 tbsp'),'spoons and cups are added together');
+  ok(has(['1 lb pasta','8 oz pasta'],'1 1/2 lb pasta')&&has(['1 lb pasta','10 oz pasta'],'Pasta: 1 lb + 10 oz'),'pounds and ounces are added together');
+  ok(M(['Salt and pepper','2 tbsp oil, salt, pepper']).filter(t=>/^salt$/i.test(t)).length===1,'unquantified items appear once');
+  ok(has(['3-4 lb brisket'],'4 lb brisket'),'a range buys the upper end');
+  const listLines=a.getElementById('listText').value.split('BY NIGHT')[0].split('\n').filter(l=>l.startsWith('[ ]'));
+  ok(new Set(listLines.map(l=>l.toLowerCase())).size===listLines.length,'no item is listed twice ('+listLines.length+' items)'); }
  a.querySelector('[data-action=close]').click();
  const rm=a.querySelector('[data-action=remove]');ok(!!rm,'custom recipe has a remove button');rm.click();await sleep(150);
  ok(Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/c-')).length===0,'custom recipe removed on server');

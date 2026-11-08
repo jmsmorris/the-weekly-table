@@ -501,22 +501,139 @@ async function searchLocation(){
   }catch(e){box.innerHTML='<p class="empty" style="padding:6px 0">Couldn’t search just now.</p>';}
 }
 
-/* shopping list */
-function buildList(){
-  var plan=S.planner.plan,out=['THE WEEKLY TABLE: SHOPPING LIST',''];
-  var tally={},order=[];
-  plan.forEach(function(d){
-    var r=S.map[d.recipeId];if(!r)return;
-    r.ingredients.forEach(function(ing){
-      var k=ing.trim().toLowerCase();
-      if(!tally[k]){tally[k]={label:ing.trim(),count:0};order.push(k);}
-      tally[k].count++;
+/* shopping list: merge the same item across recipes ("2 eggs" + "3 eggs" = "5 eggs") */
+var UNITS={cup:'cup',cups:'cup',c:'cup',tbsp:'tbsp',tbs:'tbsp',tablespoon:'tbsp',tablespoons:'tbsp',tsp:'tsp',teaspoon:'tsp',teaspoons:'tsp',
+  oz:'oz',ounce:'oz',ounces:'oz',lb:'lb',lbs:'lb',pound:'lb',pounds:'lb',g:'g',kg:'kg',ml:'ml',l:'l',
+  can:'can',cans:'can',jar:'jar',jars:'jar',clove:'clove',cloves:'clove',slice:'slice',slices:'slice',sprig:'sprig',sprigs:'sprig',
+  pint:'pint',pints:'pint',package:'package',packages:'package',pkg:'package',bunch:'bunch',bunches:'bunch',head:'head',heads:'head',
+  stalk:'stalk',stalks:'stalk',box:'box',boxes:'box',bag:'bag',bags:'bag',pinch:'pinch',handful:'handful'};
+var UNIT_PLURAL={cup:'cups',can:'cans',jar:'jars',clove:'cloves',slice:'slices',sprig:'sprigs',pint:'pints',package:'packages',bunch:'bunches',head:'heads',stalk:'stalks',box:'boxes',bag:'bags',pinch:'pinches',handful:'handfuls'};
+var PREP=/^(?:(?:finely|thinly|roughly|coarsely|lightly|very|well|freshly|and|or|into|in|to|cut|thin|thick|small|large|bite[- ]size[d]?|pieces?|strips?|chunks?|cubes?|rounds?|wedges?|halves|quarters|rings|diced|minced|sliced|chopped|halved|quartered|cubed|drained|rinsed|beaten|smashed|grated|shredded|peeled|crushed|melted|softened|scrambled|skinless|boneless|trimmed|torn|juiced|zested|divided|optional|cooked|warmed|toasted|room|temperature|for|serving|garnish|taste|spiralized|mashed|pitted|seeded|stemmed|cored)\b[ ,-]*)+$/i;
+function parseQty(s){
+  var r=s.match(/^(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\b/);if(r)return {n:parseFloat(r[2]),len:r[0].length}; // a range: buy the upper end
+  var m=s.match(/^(\d+)\s+(\d+)\/(\d+)\b/);if(m)return {n:+m[1]+m[2]/m[3],len:m[0].length};
+  m=s.match(/^(\d+)\/(\d+)\b/);if(m)return {n:m[1]/m[2],len:m[0].length};
+  m=s.match(/^\d+(?:\.\d+)?/);if(m)return {n:parseFloat(m[0]),len:m[0].length};
+  return null;
+}
+function singularWord(w){
+  if(/(ss|us|is)$/i.test(w)||w.length<4)return w;
+  if(/ies$/i.test(w))return w.slice(0,-3)+'y';
+  if(/(oes|ches|shes|xes)$/i.test(w))return w.slice(0,-2);
+  if(/s$/i.test(w))return w.slice(0,-1);
+  return w;
+}
+function pluralWord(w){
+  if(/s$/i.test(w))return w;
+  if(/[^aeiou]y$/i.test(w))return w.slice(0,-1)+'ies';
+  if(/(o|ch|sh|x)$/i.test(w))return w+'es';
+  return w+'s';
+}
+function itemKey(name){
+  var words=name.toLowerCase().replace(/[^a-z0-9' -]/g,' ').replace(/\s+/g,' ').trim().split(' ');
+  words[words.length-1]=singularWord(words[words.length-1]);
+  return words.join(' ');
+}
+function fmtQty(n){
+  var whole=Math.floor(n+1e-9),f=n-whole,fr='';
+  [[1/4,'1/4'],[1/3,'1/3'],[1/2,'1/2'],[2/3,'2/3'],[3/4,'3/4']].forEach(function(p){if(Math.abs(f-p[0])<0.02)fr=p[1];});
+  if(f<0.02)return String(whole);
+  if(fr)return (whole?whole+' ':'')+fr;
+  return String(Math.round(n*100)/100);
+}
+// One ingredient line can hold several items ("1 onion, 2 carrots, diced"): split on commas
+// outside brackets; parts with a quantity start new items, prep notes ("diced") are dropped,
+// and unquantified parts ("salt and pepper") become items without an amount.
+function splitIngredient(line){
+  var parts=[],depth=0,cur='';
+  for(var i=0;i<line.length;i++){var ch=line[i];if(ch==='(')depth++;if(ch===')')depth=Math.max(0,depth-1);
+    if(ch===','&&!depth){parts.push(cur);cur='';}else cur+=ch;}
+  parts.push(cur);
+  var items=[];
+  parts.forEach(function(p){
+    p=p.trim();if(!p)return;
+    var q=parseQty(p);
+    if(q){
+      var rest=p.slice(q.len).trim(),unit='',um=rest.match(/^([a-zA-Z]+)\.?(?:\s+|$)/);
+      if(um&&UNITS[um[1].toLowerCase()]){unit=UNITS[um[1].toLowerCase()];rest=rest.slice(um[0].length);
+        var size=rest.match(/^\(([^)]*\d[^)]*)\)\s*/);if(size){unit+=' ('+size[1].trim()+')';rest=rest.slice(size[0].length);}}
+      var name=rest.replace(/\([^)]*\)/g,' ').replace(/^of\s+/i,'').replace(/\s+/g,' ').trim();
+      if(name)items.push({n:q.n,unit:unit,name:name});
+      return;
+    }
+    var bare=p.replace(/\([^)]*\)/g,' ').replace(/\s+/g,' ').trim();
+    if(!bare||PREP.test(bare))return;
+    if(/^or\b/i.test(bare)){if(items.length)items[items.length-1].name+=', '+bare;return;}
+    bare.split(/\s+and\s+/i).forEach(function(b){b=b.trim();if(b&&!PREP.test(b))items.push({n:null,unit:'',name:b});});
+  });
+  return items;
+}
+function mergeIngredients(lines){
+  var groups={},order=[];
+  lines.forEach(function(line){
+    splitIngredient(String(line||'')).forEach(function(it){
+      var k=itemKey(it.name);if(!k)return;
+      var g=groups[k];
+      if(!g){g=groups[k]={key:k,one:null,many:null,any:it.name,units:{},unitOrder:[],bare:false};order.push(k);}
+      if(it.n===null){g.bare=true;return;}
+      if(it.unit){if(!g.unitName)g.unitName=it.name;}
+      else if(it.n===1){if(!g.one)g.one=it.name;}else if(!g.many)g.many=it.name;
+      if(!(it.unit in g.units)){g.units[it.unit]=0;g.unitOrder.push(it.unit);}
+      g.units[it.unit]+=it.n;
     });
   });
+  // fold cup/tbsp/tsp into one volume and lb/oz into one weight, kept in imperial
+  var VOL={cup:48,tbsp:3,tsp:1},WT={lb:16,oz:1};
+  function fold(g,table,unitFor){
+    var total=0,first=-1;
+    g.unitOrder=g.unitOrder.filter(function(u,i){if(table[u]){total+=g.units[u]*table[u];if(first<0)first=i;return false;}return true;});
+    if(first<0)return;
+    unitFor(total).forEach(function(p,j){g.units[p[1]]=p[0];g.unitOrder.splice(first+j,0,p[1]);});
+  }
+  function volParts(t){
+    t=Math.round(t*12)/12;
+    if(t>=12&&(t%16<0.01||t%12<0.01))return [[t/48,'cup']];
+    var parts=[],c=t>=12?Math.floor(t/12)*12:0;if(c)parts.push([c/48,'cup']);t-=c;
+    var tb=Math.floor(t/3+1e-9);if(tb)parts.push([tb,'tbsp']);t-=tb*3;
+    if(t>0.01)parts.push([t,'tsp']);
+    return parts;
+  }
+  function wtParts(t){
+    if(t<16)return [[t,'oz']];
+    if(t%4<0.01)return [[t/16,'lb']];
+    var lb=Math.floor(t/16+1e-9),oz=t-lb*16;
+    return oz>0.01?[[lb,'lb'],[oz,'oz']]:[[lb,'lb']];
+  }
+  return order.map(function(k){
+    var g=groups[k];
+    fold(g,VOL,volParts);fold(g,WT,wtParts);
+    var amounts=g.unitOrder.map(function(u){
+      var n=g.units[u],q=fmtQty(n);
+      if(!u)return q;
+      var base=u.split(' ')[0],sz=u.slice(base.length);
+      return q+' '+(n>1&&UNIT_PLURAL[base]?UNIT_PLURAL[base]:base)+sz;
+    });
+    var cap=function(s){return s.charAt(0).toUpperCase()+s.slice(1);};
+    var text;
+    if(!amounts.length)text=cap(g.any);
+    else if(amounts.length===1&&!g.unitOrder[0]){
+      var n=g.units[''],nm=n===1?(g.one||g.many||g.any):(g.many||g.one||g.any);
+      if(n!==1&&!g.many){var w=nm.split(' ');w[w.length-1]=pluralWord(w[w.length-1]);nm=w.join(' ');}
+      if(n===1&&!g.one){var w1=nm.split(' ');w1[w1.length-1]=singularWord(w1[w1.length-1]);nm=w1.join(' ');}
+      text=amounts[0]+' '+nm;
+    }
+    else if(amounts.length===1)text=amounts[0]+' '+(g.unitName||g.any);
+    else text=cap(g.unitName||g.many||g.one||g.any)+': '+amounts.join(' + ');
+    return {key:k,text:text};
+  }).sort(function(a,b){return a.key.localeCompare(b.key);}).map(function(x){return x.text;});
+}
+window.__wtMergeIngredients=mergeIngredients;
+function buildList(){
+  var plan=S.planner.plan,out=['THE WEEKLY TABLE: SHOPPING LIST',''];
+  var all=[];
+  plan.forEach(function(d){var r=S.map[d.recipeId];if(r)all=all.concat(r.ingredients);});
   out.push('ALL INGREDIENTS','----------------------------------------');
-  order.map(function(k){return tally[k];}).sort(function(a,b){return a.label.localeCompare(b.label);}).forEach(function(t){
-    out.push('[ ] '+t.label+(t.count>1?' (×'+t.count+')':''));
-  });
+  mergeIngredients(all).forEach(function(t){out.push('[ ] '+t);});
   out.push('','BY NIGHT','----------------------------------------');
   plan.forEach(function(d){
     var r=S.map[d.recipeId];if(!r)return;
