@@ -27,16 +27,15 @@ It was designed and built in a Claude chat; this repo is the result. There is no
 - **Weather**: Open-Meteo (no key) for daily highs. The target week is the coming Mon to Sun if today is Thu to Sun, otherwise the current week. Priority: manual override for that week, then live forecast, then a seasonal average. Weights per weather band are in `BANDS` in `app.js`.
 - **Import from URL**: `supabase/functions/import-recipe/index.ts` (Deno edge function) fetches a page server-side and reads schema.org Recipe JSON-LD. It requires a valid household code (so it is not an open proxy) and blocks private and local addresses, including through redirects. The client (`runImport` in `app.js`) guesses category, flags meat+dairy mixes and non-kosher ingredients, and prefills the add-recipe form.
 
-## Status when handed off
-Done and tested (simulated Supabase and weather; `npm test` passes): everything above.
+## Status
+Live and smoke-tested on 2026-11-08 (two real browsers against the live site and Supabase): household create, week build, invite-link join, swap sync, and recipe import all work.
 
-**Not yet done or never verified against live services:**
-1. The repo has a local commit but **has not been pushed** to https://github.com/jmsmorris/the-weekly-table.git (the chat session had no GitHub login). First task: `git push -u origin main`.
-2. **Run `supabase/schema.sql`** in the Supabase SQL editor for project `gitrtnnpmouqulgdejtd` (the owner must do this or give you the Supabase CLI login).
-3. **Enable GitHub Pages** (Settings, Pages, branch `main`, root). Needs a public repo on a free plan.
-4. **Deploy the edge function**: `supabase functions deploy import-recipe --no-verify-jwt --project-ref gitrtnnpmouqulgdejtd` (or paste into the dashboard editor with "Verify JWT" off).
-5. **Smoke-test the live site**: create a household, build a week, join from a second browser with the invite link, swap on one and confirm it appears on the other, import a real recipe URL. Check the `sb_publishable_` key works with only the `apikey` header (the app sends `Authorization` only for legacy JWT keys that start with `eyJ`).
-6. Optional ideas the owner has not asked for: a service worker for offline use; real recipe photos.
+- Repo pushed to `main`; GitHub Pages serves it from `main`, root.
+- `supabase/schema.sql` has been run on project `gitrtnnpmouqulgdejtd`. The `docs` table is closed to the publishable key; only the `wt_*` functions work, and they work with just the `apikey` header.
+- The import edge function is deployed under the dashboard-generated slug **`rapid-action`** (not `import-recipe`), with Verify JWT off. `config.js` sets `importFunction: "rapid-action"`. To redeploy from the CLI: `supabase functions deploy rapid-action --no-verify-jwt --project-ref gitrtnnpmouqulgdejtd` (copy `supabase/functions/import-recipe` to `supabase/functions/rapid-action` first, or redeploy by pasting into the dashboard editor).
+- Some recipe sites (e.g. Allrecipes, Serious Eats) refuse server-side fetches with 403; the app shows a clear message. BBC Good Food imports fine.
+- Open-Meteo rate-limits shared IPs (429); the app then falls back to the seasonal average and labels it.
+- Optional ideas the owner has not asked for: a service worker for offline use; real recipe photos.
 
 ## Commands
 - `npm install` then `npm test` runs the edge function tests and the full end-to-end site test (two simulated devices sharing a fake database). All must pass before pushing.
