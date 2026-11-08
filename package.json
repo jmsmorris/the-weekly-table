@@ -1,0 +1,13 @@
+{
+  "name": "the-weekly-table",
+  "private": true,
+  "description": "Static site (GitHub Pages). This package.json only exists to run the tests; the site itself has no build step.",
+  "scripts": {
+    "test": "node tests/build-fn.mjs && node tests/fn.test.mjs && node tests/site.test.js",
+    "serve": "npx --yes serve ."
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0"
+  }
+}
