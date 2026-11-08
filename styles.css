@@ -163,3 +163,18 @@ textarea.mono{font-family:'Space Mono',ui-monospace,Menlo,monospace;font-size:12
 .imp-msg .fixes li{margin:3px 0}
 .imp-msg .fixes small{display:block;color:var(--soft);font-size:11.5px}
 .imp-msg .fixes em{display:block;font-style:normal;font-weight:600;margin-top:8px}
+
+/* import: tick the swaps to make */
+.imp-msg .fixes>.swapnote{display:block;margin:2px 0 4px}
+.imp-msg .swap{display:flex;gap:9px;align-items:flex-start;margin:6px 0;padding:8px 9px;border:1.5px solid var(--gold);border-radius:6px;background:var(--card);cursor:pointer}
+.imp-msg .swap.off{border-color:var(--line);opacity:.75}
+.imp-msg .swap input{width:18px;height:18px;margin:1px 0 0;flex:none;accent-color:var(--gold)}
+.imp-msg .swapbody{display:flex;flex-direction:column;gap:2px;min-width:0}
+.imp-msg .swapline{display:block;font-size:12px;overflow-wrap:anywhere}
+.imp-msg .swapline s{color:var(--soft)}
+.imp-msg .swapnote{display:block;font-size:11.5px;color:var(--soft)}
+.imp-msg .routes{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+.imp-msg .swapgroup{display:block}
+.imp-msg .fixbar{display:block;margin:10px 0 6px}
+.imp-msg .fixbar .btn-solid:disabled{opacity:.5;cursor:default}
+.linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
