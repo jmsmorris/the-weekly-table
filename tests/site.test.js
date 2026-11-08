@@ -162,7 +162,7 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  ok(/No household found/.test(C.document.getElementById('week').textContent),'wrong code shows an error');
  // 11. shopping list + removal of a custom recipe
  a.querySelector('[data-action=export]').click();
- ok(a.getElementById('listText').value.includes('ALL INGREDIENTS'),'shopping list builds');
+ ok(a.getElementById('listText').value.includes('TO BUY'),'shopping list builds');
 { const M=A.__wtMergeIngredients,has=(l,t)=>M(l).includes(t);
   ok(has(['2 eggs','3 eggs, beaten'],'5 eggs'),'shopping list adds 2 eggs + 3 eggs = 5 eggs');
   ok(has(['1 onion, diced','1 onion, 2 carrots, diced','3 onions, sliced'],'5 onions')&&has(['1 onion, 2 carrots, diced'],'2 carrots'),'combined lines are split and prep notes dropped');
@@ -174,6 +174,29 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
   ok(has(['3-4 lb brisket'],'4 lb brisket'),'a range buys the upper end');
   const listLines=a.getElementById('listText').value.split('BY NIGHT')[0].split('\n').filter(l=>l.startsWith('[ ]'));
   ok(new Set(listLines.map(l=>l.toLowerCase())).size===listLines.length,'no item is listed twice ('+listLines.length+' items)'); }
+
+  // interactive: tick items already at home, export only the rest
+  const boxes=()=>[...a.querySelectorAll('#shopRows input')];
+  const exportText=()=>a.getElementById('listText').value;
+  const toBuy=()=>exportText().split('BY NIGHT')[0].split('\n').filter(l=>l.startsWith('[ ]'));
+  const total=boxes().length, before=toBuy().length;
+  ok(total>0&&total===before,'every item gets a checkbox and starts in the export ('+total+')');
+  ok(/\d+ to buy · 0 at home/.test(a.getElementById('shopCount').textContent),'counter starts at 0 at home');
+  const firstName=boxes()[0].parentNode.textContent.trim();
+  const tick=(i,on)=>{const c=boxes()[i];c.checked=on;c.dispatchEvent(new A.Event('change',{bubbles:true}));};
+  tick(0,true);tick(1,true);
+  ok(toBuy().length===before-2,'ticked items leave the export');
+  ok(!toBuy().some(l=>l.includes(firstName)),'the ticked item is not in the exported list');
+  ok(boxes()[0].parentNode.classList.contains('have'),'ticked row is struck through');
+  ok(new RegExp('^'+(before-2)+' to buy · 2 at home').test(a.getElementById('shopCount').textContent),'counter updates');
+  ok(/TO BUY \(\d+ of \d+; the rest is at home\)/.test(exportText()),'export says some items are at home');
+  a.querySelector('[data-action=close]').click();a.querySelector('[data-action=export]').click();
+  ok(boxes()[0].checked&&boxes()[1].checked&&!boxes()[2].checked,'ticks are remembered when the list is reopened');
+  tick(0,false);ok(toBuy().length===before-1,'unticking puts the item back');
+  boxes().forEach((c,i)=>{if(!c.checked)tick(i,true);});
+  ok(/Nothing to buy/.test(exportText())&&!/BY NIGHT/.test(exportText()),'ticking everything leaves nothing to buy');
+  a.querySelector('[data-action=have-clear]').click();
+  ok(toBuy().length===before&&boxes().every(c=>!c.checked),'untick all restores the full list');
  a.querySelector('[data-action=close]').click();
  const rm=a.querySelector('[data-action=remove]');ok(!!rm,'custom recipe has a remove button');rm.click();await sleep(150);
  ok(Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/c-')).length===0,'custom recipe removed on server');

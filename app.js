@@ -29,6 +29,7 @@ var S={
   code:'',docs:{},known:{},
   recipes:[],map:{},
   planner:{plan:null,weekStart:'',history:[]},
+  have:{},
   override:null,
   settings:{name:'Hamilton, ON',lat:43.2557,lon:-79.8711},
   live:{},liveAt:0,liveErr:false,
@@ -568,7 +569,7 @@ function splitIngredient(line){
   });
   return items;
 }
-function mergeIngredients(lines){
+function mergeItems(lines){
   var groups={},order=[];
   lines.forEach(function(line){
     splitIngredient(String(line||'')).forEach(function(it){
@@ -625,29 +626,78 @@ function mergeIngredients(lines){
     else if(amounts.length===1)text=amounts[0]+' '+(g.unitName||g.any);
     else text=cap(g.unitName||g.many||g.one||g.any)+': '+amounts.join(' + ');
     return {key:k,text:text};
-  }).sort(function(a,b){return a.key.localeCompare(b.key);}).map(function(x){return x.text;});
+  }).sort(function(a,b){return a.key.localeCompare(b.key);});
 }
+function mergeIngredients(lines){return mergeItems(lines).map(function(x){return x.text;});}
 window.__wtMergeIngredients=mergeIngredients;
-function buildList(){
+/* items already at home: ticked in the export dialog, remembered on this device for the week */
+var shopItems=[];
+function loadHave(){
+  var ws=planWeek();
+  try{var o=JSON.parse(localStorage.getItem('wt-have-v1')||'null');
+    if(o&&o.week===ws&&Array.isArray(o.keys)){var h={};o.keys.forEach(function(k){h[k]=1;});return h;}}catch(e){}
+  return {};
+}
+function saveHave(){
+  try{localStorage.setItem('wt-have-v1',JSON.stringify({week:planWeek(),keys:Object.keys(S.have)}));}catch(e){}
+}
+function allLines(){
+  var all=[];(S.planner.plan||[]).forEach(function(d){var r=S.map[d.recipeId];if(r)all=all.concat(r.ingredients);});
+  return all;
+}
+// A recipe line is dropped from the by-night section only when every item on it is at home.
+function lineAtHome(line,have){
+  var items=splitIngredient(String(line||''));
+  return items.length>0&&items.every(function(it){return have[itemKey(it.name)];});
+}
+function buildList(have){
+  have=have||{};
   var plan=S.planner.plan,out=['THE WEEKLY TABLE: SHOPPING LIST',''];
-  var all=[];
-  plan.forEach(function(d){var r=S.map[d.recipeId];if(r)all=all.concat(r.ingredients);});
-  out.push('ALL INGREDIENTS','----------------------------------------');
-  mergeIngredients(all).forEach(function(t){out.push('[ ] '+t);});
-  out.push('','BY NIGHT','----------------------------------------');
+  var items=mergeItems(allLines()),need=items.filter(function(x){return !have[x.key];});
+  out.push('TO BUY'+(need.length<items.length?' ('+need.length+' of '+items.length+'; the rest is at home)':''),'------------------------------');
+  if(need.length)need.forEach(function(x){out.push('[ ] '+x.text);});
+  else out.push('Nothing to buy: you have it all at home.');
+  var nights=[];
   plan.forEach(function(d){
     var r=S.map[d.recipeId];if(!r)return;
-    out.push('',d.day.toUpperCase()+': '+r.name);
-    r.ingredients.forEach(function(ing){out.push('  - '+ing);});
+    var lines=r.ingredients.filter(function(ing){return !lineAtHome(ing,have);});
+    if(lines.length)nights.push(['',d.day.toUpperCase()+': '+r.name].concat(lines.map(function(ing){return '  - '+ing;})));
   });
+  if(nights.length){out.push('','BY NIGHT','------------------------------');nights.forEach(function(n){out=out.concat(n);});}
   return out.join('\n');
 }
 function openExport(){
   if(!S.planner.plan)return;
-  openModal(mhead('Shopping list','Everything for this week’s plan.')+
-    '<textarea id="listText" class="mono" rows="14" readonly style="width:100%;font-family:\'Space Mono\',ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;color:var(--text);background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:10px">'+esc(buildList())+'</textarea>'+
+  S.have=loadHave();
+  shopItems=mergeItems(allLines());
+  openModal(mhead('Shopping list','Tick what you already have at home. Only the rest is exported.')+
+    '<div class="shopbar"><span id="shopCount" class="mono"></span><button class="btn-ghost" data-action="have-clear">Untick all</button></div>'+
+    '<div id="shopRows" class="shoprows">'+shopItems.map(function(x,i){
+      return '<label class="shoprow'+(S.have[x.key]?' have':'')+'"><input type="checkbox" data-have="'+i+'"'+(S.have[x.key]?' checked':'')+'><span>'+esc(x.text)+'</span></label>';
+    }).join('')+'</div>'+
+    '<p class="dlabel" style="margin:14px 0 4px">What will be exported</p>'+
+    '<textarea id="listText" class="mono" rows="7" readonly style="width:100%;font-family:\'Space Mono\',ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;color:var(--text);background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:10px"></textarea>'+
     '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn-solid" data-action="copy-list">Copy list</button>'+
     '<button class="btn-ghost" data-action="save-list">Share or save .txt</button></div>');
+  refreshShop();
+}
+function refreshShop(){
+  var ta=$('listText');if(!ta)return;
+  var have=0;shopItems.forEach(function(x){if(S.have[x.key])have++;});
+  ta.value=buildList(S.have);
+  $('shopCount').textContent=(shopItems.length-have)+' to buy · '+have+' at home';
+}
+function toggleHave(i,on){
+  var x=shopItems[i];if(!x)return;
+  if(on)S.have[x.key]=1;else delete S.have[x.key];
+  saveHave();
+  var row=document.querySelector('[data-have="'+i+'"]');if(row&&row.parentNode)row.parentNode.classList.toggle('have',!!on);
+  refreshShop();
+}
+function clearHave(){
+  S.have={};saveHave();
+  [].forEach.call(document.querySelectorAll('#shopRows input'),function(c){c.checked=false;c.parentNode.classList.remove('have');});
+  refreshShop();
 }
 function saveList(){
   var text=$('listText').value,name='weekly-table-shopping-list-'+isoDate(new Date())+'.txt';
@@ -809,9 +859,11 @@ document.addEventListener('click',function(e){
   else if(a==='leave'){if(window.confirm('Leave this household on this device? Your data stays safe in the shared household.'))leaveHousehold();}
   else if(a==='copy-list')copyText($('listText'),'Shopping list copied.');
   else if(a==='save-list')saveList();
+  else if(a==='have-clear')clearHave();
 });
 document.addEventListener('change',function(e){
   if(e.target&&e.target.id==='swapRecent'&&swapState)openSwap(swapState.i,e.target.checked);
+  if(e.target&&e.target.dataset&&e.target.dataset.have!==undefined)toggleHave(Number(e.target.dataset.have),e.target.checked);
 });
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'&&$('modal').firstChild)closeModal();

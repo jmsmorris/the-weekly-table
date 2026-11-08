@@ -149,3 +149,11 @@ textarea.mono{font-family:'Space Mono',ui-monospace,Menlo,monospace;font-size:12
 .code-row{display:flex;gap:8px;align-items:center}
 .code{font-family:'Space Mono',ui-monospace,Menlo,monospace;font-size:15px;letter-spacing:.14em;background:var(--bg);border:1.5px solid var(--line);border-radius:6px;padding:8px 10px;user-select:all}
 .hint a{color:inherit}
+
+/* shopping list: tick what you already have */
+.shopbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:2px 0 8px;font-size:11px;color:var(--soft)}
+.shoprows{max-height:min(40vh,320px);overflow-y:auto;border:1.5px solid var(--line);border-radius:6px;background:var(--bg)}
+.shoprow{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;font-size:13.5px;line-height:1.35;border-bottom:1px solid var(--line);cursor:pointer}
+.shoprow:last-child{border-bottom:0}
+.shoprow input{width:18px;height:18px;margin:1px 0 0;flex:none;accent-color:var(--gold)}
+.shoprow.have span{text-decoration:line-through;color:var(--soft);opacity:.7}
