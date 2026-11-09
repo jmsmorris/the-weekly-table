@@ -2,7 +2,7 @@ let handler;
 globalThis.Deno={serve:(h)=>{handler=h;},env:{get:(k)=>({SUPABASE_URL:'https://x.supabase.co',SUPABASE_ANON_KEY:'anon'})[k]}};
 const realResponse=Response;
 const pages={
- 'https://good.example/recipe':{status:200,html:`<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":["Recipe"],"name":"Slow Cooker Chicken &amp; Rice","totalTime":"PT6H15M","recipeIngredient":["2 lb chicken thighs","1 cup rice","1 <b>onion</b>, diced"],"recipeInstructions":[{"@type":"HowToSection","itemListElement":[{"@type":"HowToStep","text":"Add everything to the slow cooker."},{"@type":"HowToStep","text":"Cook on low 6 hours."}]},"Shred and serve."],"keywords":"crockpot, dinner"}]}</script></head></html>`},
+ 'https://good.example/recipe':{status:200,html:`<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":["Recipe"],"name":"Slow Cooker Chicken &amp; Rice","recipeYield":["6","6 servings"],"totalTime":"PT6H15M","recipeIngredient":["2 lb chicken thighs","1 cup rice","1 <b>onion</b>, diced"],"recipeInstructions":[{"@type":"HowToSection","itemListElement":[{"@type":"HowToStep","text":"Add everything to the slow cooker."},{"@type":"HowToStep","text":"Cook on low 6 hours."}]},"Shred and serve."],"keywords":"crockpot, dinner"}]}</script></head></html>`},
  'https://nodata.example/':{status:200,html:'<html><body>No structured data</body></html>'},
  'https://redir.example/a':{status:301,location:'http://127.0.0.1/admin'},
  'https://forbidden.example/':{status:403,html:''},
@@ -18,7 +18,7 @@ await import('./.tmp/fn.mjs');
 const call=async(body,method='POST')=>{const r=await handler(new Request('https://f/x',{method,body:method==='POST'?JSON.stringify(body):undefined}));return {status:r.status,json:await r.json().catch(()=>null),cors:r.headers.get('access-control-allow-origin')};};
 const out=[];
 let r=await call({url:'https://good.example/recipe',code:'GOODCODE12'});
-out.push(['good recipe',r.status,r.json.name,r.json.minutes,r.json.ingredients.length,r.json.instructions.join('|'),r.json.source,r.cors]);
+out.push(['good recipe',r.status,r.json.name,r.json.minutes,'servings '+r.json.servings,r.json.ingredients.length,r.json.instructions.join('|'),r.json.source,r.cors]);
 r=await call({url:'https://good.example/recipe',code:'WRONGCODE12'});out.push(['bad code',r.status,r.json.error]);
 r=await call({url:'https://good.example/recipe'});out.push(['no code',r.status]);
 r=await call({url:'https://nodata.example/',code:'GOODCODE12'});out.push(['no recipe',r.status,r.json.error]);

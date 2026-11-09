@@ -74,6 +74,13 @@ function isoMinutes(d: unknown): number {
   if (!m) return 0;
   return (Number(m[1] || 0) * 1440) + (Number(m[2] || 0) * 60) + Number(m[3] || 0);
 }
+function parseServings(y: unknown): number {
+  for (const v of Array.isArray(y) ? y : [y]) {
+    const m = /\d+/.exec(String(v ?? ""));
+    if (m && Number(m[0]) >= 1 && Number(m[0]) <= 99) return Number(m[0]);
+  }
+  return 0;
+}
 function extractRecipe(html: string): any | null {
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
@@ -164,6 +171,7 @@ Deno.serve(async (req) => {
   return json({
     name: clean(r.name, 140),
     minutes,
+    servings: parseServings(r.recipeYield),
     ingredients,
     instructions,
     keywords: clean(keywords, 300),

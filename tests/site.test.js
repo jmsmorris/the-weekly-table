@@ -59,6 +59,13 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  ok(recipeDocs===112,'seeded 112 recipes ('+recipeDocs+')');
  ok(!!doc(code,'meta/seed'),'seed version recorded');
  ok(a.querySelectorAll('.bcard').length===112,'A shows 112 recipe cards');
+ { const seed=JSON.parse(recipesJson).recipes;
+   const DAIRY=/cheese|milk|butter|cream|yogh?urt|parmesan|feta|mozzarella|cheddar|ricotta|paneer/i,MEAT=/chicken|beef|turkey|lamb|brisket|steak|sausage|meatball|hot ?dog|bacon|\bham\b/i;
+   ok(seed.every(r=>Number.isInteger(r.servings)&&r.servings>=1&&r.servings<=12),'every shipped recipe has a servings estimate');
+   ok(seed.every(r=>Array.isArray(r.sides)&&r.sides.length>=1&&r.sides.length<=2&&r.sides.every(x=>typeof x==='string'&&x.length>2&&x.length<=60)),'every shipped recipe has one or two sides');
+   ok(seed.filter(r=>r.category==='meat').every(r=>!r.sides.some(x=>DAIRY.test(x))),'sides for meat dishes contain no dairy');
+   ok(seed.filter(r=>r.category!=='meat').every(r=>!r.sides.some(x=>MEAT.test(x)))&&seed.filter(r=>r.category!=='dairy').every(r=>!r.sides.some(x=>/milk|butter|cream|cheese|yogh?urt/i.test(x))),'sides for dairy and pareve dishes contain no meat, and pareve dishes get no dairy sides');
+   ok(a.querySelectorAll('.bcard .meta').length===112&&[...a.querySelectorAll('.bcard')].every(c=>/serves ~\d+/.test(c.textContent)&&/Round it out:/.test(c.textContent)),'every recipe card shows servings and sides'); }
  ok(/Household code/.test(a.getElementById('modal').textContent),'settings (invite) opened after create');
  a.querySelector('[data-action=close]').click();
  // 2. generate
@@ -118,9 +125,28 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    ok(plan0().filter(id=>R(id).category==='meat').length===before.filter(id=>R(id).category==='meat').length,'the number of meat nights is unchanged');
    // switch back so later steps see the original order
    a.querySelectorAll('[data-action=move]')[0].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j==='1').click();await sleep(200); }
+ // 4c. servings and sides on the week's cards and in the recipe view
+ { const cards=[...a.querySelectorAll('.daycard')];
+   ok(cards.length===7&&cards.every(c=>/serves ~\d+/.test(c.textContent)&&/Round it out:/.test(c.querySelector('.sides').textContent)),'every day card shows servings and sides');
+   const rid=doc(code,'planner/state').plan[0].recipeId;
+   ok(cards[0].querySelector('.sides').textContent.includes(R(rid).sides[0]),'the day card shows the recipe’s own sides');
+   a.querySelector('[data-action=view-day]').click();
+   a.querySelector('[data-action=view-day]').click(); }
+ // 4d. a household set up before servings existed gets them added once, custom recipes untouched
+ { const keys=Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/')&&!server.docs[k].data.custom);
+   const custom=Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/')&&server.docs[k].data.custom).map(k=>[k,JSON.stringify(server.docs[k].data)]);
+   keys.forEach(k=>{delete server.docs[k].data.servings;delete server.docs[k].data.sides;});
+   server.docs[code+'|meta/seed'].data.version=1;
+   const before=Object.fromEntries(keys.map(k=>[k,JSON.stringify(Object.assign({},server.docs[k].data,{servings:0,sides:0}))]));
+   device('#join='+code);await sleep(1200);
+   const done=keys.filter(k=>server.docs[k].data.servings>=1&&server.docs[k].data.sides.length>=1);
+   ok(keys.length===112&&done.length===112,'an existing household gets servings and sides added to its recipes ('+done.length+'/'+keys.length+')');
+   ok(keys.every(k=>JSON.stringify(Object.assign({},server.docs[k].data,{servings:0,sides:0}))===before[k]),'nothing else in those recipes changes');
+   ok(custom.every(([k,v])=>JSON.stringify(server.docs[k].data)===v),'your own recipes are not touched');
+   ok(server.docs[code+'|meta/seed'].data.version===2,'the seed version moves on so this runs once'); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
- importReply={name:'Slow Cooker Chicken & Rice',minutes:375,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};
+ importReply={name:'Slow Cooker Chicken & Rice',minutes:375,servings:6,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};
  b.getElementById('fUrl').value='https://good.example/recipe';
  b.querySelector('[data-action=import-url]').click();await sleep(100);
  ok(b.getElementById('fName').value==='Slow Cooker Chicken & Rice','import prefilled the name');
@@ -128,11 +154,16 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  ok(b.getElementById('fStyle').value==='slow-cooker','slow-cooker style guessed');
  ok(b.getElementById('fMin').value==='375','time prefilled');
  ok(b.getElementById('fIng').value.split('\n').length===3,'ingredients prefilled');
+ ok(b.getElementById('fServ').value==='6','servings prefilled from the page');
  b.querySelector('[data-action=add-save]').click();await sleep(200);
  const added=Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/c-'));
  ok(added.length===1&&server.docs[added[0]].data.sourceUrl==='https://good.example/recipe','imported recipe saved with source link');
  await A.__wtPoll();await sleep(100);
  ok(a.querySelectorAll('.bcard').length===113,'A sees the imported recipe after polling');
+ { const card=[...a.querySelectorAll('.bcard')].find(c=>/Slow Cooker Chicken & Rice/.test(c.textContent));
+   ok(server.docs[added[0]].data.servings===6,'servings are saved with the recipe');
+   ok(card&&/serves ~6/.test(card.textContent),'a saved recipe shows its servings');
+   ok(card&&/Round it out:/.test(card.textContent)&&!/chicken|cheese|milk/i.test(card.querySelector('.sides').textContent),'a recipe with no sides of its own gets a dairy- and meat-free suggestion'); }
  // 6. mixed meat+dairy and non-kosher warnings
  b.querySelector('#addBtn').click();
  importReply={name:'Chicken Parmesan',minutes:40,ingredients:['4 chicken breasts','1 cup mozzarella','1/2 cup parmesan','1 cup marinara'],instructions:['Top with mozzarella and parmesan.','Bake.'],source:'x.example'};
@@ -261,6 +292,14 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
   ok(has(['1 lb pasta','8 oz pasta'],'1 1/2 lb pasta')&&has(['1 lb pasta','10 oz pasta'],'Pasta: 1 lb + 10 oz'),'pounds and ounces are added together');
   ok(M(['Salt and pepper','2 tbsp oil, salt, pepper']).filter(t=>/^salt$/i.test(t)).length===1,'unquantified items appear once');
   ok(has(['3-4 lb brisket'],'4 lb brisket'),'a range buys the upper end');
+  { const S2=A.__wtSuggestSides,mk=(name,ings)=>({name,ingredients:ings});
+    const none=S2(mk('Plain pasta',['12 oz pasta','1 tbsp olive oil']));
+    ok(none.length<=2&&none.some(x=>/chickpeas|edamame|bean/i.test(x)),'a dish with no protein is offered a protein side');
+    ok(S2(mk('Chicken',['2 lb chicken','1 cup rice'])).length===1&&/broccoli|salad|carrots|green beans|zucchini/i.test(S2(mk('Chicken',['2 lb chicken','1 cup rice']))[0]),'a dish with no veg is offered a veg side');
+    ok(S2(mk('Bowl',['1 lb chicken','3 cups rice','2 cups broccoli','2 carrots','1 cucumber'])).length===1,'a dish that has everything gets one extra fibre side');
+    ok(S2(mk('Salad',['2 cups lettuce','1 cucumber','1 tomato'])).some(x=>/rice|potato|quinoa|couscous|bread/i.test(x)),'a dish with no carbs is offered a carb side');
+    const all=['Pasta','Stew','Pie','Soup','Wrap','Bowl','Bake'].flatMap(n=>S2(mk(n,['1 cup flour']))).concat(S2(mk('x',['1 lb ground beef'])));
+    ok(all.every(x=>!/cheese|milk|butter|cream|yogh?urt|chicken|beef|turkey/i.test(x)),'suggested sides are always meat- and dairy-free'); }
   const listLines=a.getElementById('listText').value.split('BY NIGHT')[0].split('\n').filter(l=>l.startsWith('[ ]'));
   ok(new Set(listLines.map(l=>l.toLowerCase())).size===listLines.length,'no item is listed twice ('+listLines.length+' items)'); }
 

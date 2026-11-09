@@ -178,3 +178,7 @@ textarea.mono{font-family:'Space Mono',ui-monospace,Menlo,monospace;font-size:12
 .imp-msg .fixbar{display:block;margin:10px 0 6px}
 .imp-msg .fixbar .btn-solid:disabled{opacity:.5;cursor:default}
 .linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
+
+/* servings and sides on recipe cards */
+.sides{font-size:12.5px;line-height:1.4;color:var(--soft);margin-top:8px}
+.sides b{color:var(--text);font-weight:600}

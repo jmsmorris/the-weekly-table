@@ -95,6 +95,8 @@ function normRecipe(id,d){
     custom:!!d.custom,
     warmth:(Number(d.warmth)>=1&&Number(d.warmth)<=3)?Math.round(Number(d.warmth)):inferWarmth(d),
     shabbat:!!d.shabbat,
+    servings:(function(n){n=Math.round(Number(n));return n>=1&&n<=99?n:0;})(d.servings),
+    sides:Array.isArray(d.sides)?d.sides.map(function(x){return String(x).trim().slice(0,80);}).filter(Boolean).slice(0,2):[],
     sourceUrl:/^https?:\/\//i.test(String(d.sourceUrl||''))?String(d.sourceUrl):''
   };
 }
@@ -197,7 +199,9 @@ async function seedIfNeeded(){
     var rows=[];
     seed.recipes.forEach(function(rec){
       var p='recipes/'+rec.id;
-      if(!S.docs[p]){var d=Object.assign({},rec);delete d.id;rows.push({path:p,data:d});}
+      var cur=S.docs[p];
+      if(!cur){var d=Object.assign({},rec);delete d.id;rows.push({path:p,data:d});}
+      else if(!cur.custom&&(cur.servings==null||!Array.isArray(cur.sides))&&(rec.servings||rec.sides))rows.push({path:p,data:Object.assign({},cur,{servings:rec.servings||0,sides:rec.sides||[]})});
     });
     rows.push({path:'meta/seed',data:{version:seed.version,at:Date.now()}});
     for(var i=0;i<rows.length;i+=40){await writeDocs(rows.slice(i,i+40));}
@@ -313,8 +317,31 @@ function meatCount(plan){return plan.filter(function(d){var r=S.map[d.recipeId];
 function emojiOf(r){return r.emoji||FALLBACK_EMOJI[r.category]||'🍽️';}
 function photo(r,h){return '<div class="photo c-'+r.category+'" style="height:'+h+'px"><span style="font-size:'+Math.round(h*0.42)+'px">'+esc(emojiOf(r))+'</span></div>';}
 function stamp(r,sm){return '<span class="stamp s-'+r.category+(sm?' sm':'')+'" title="'+CAT[r.category].label+'">'+CAT[r.category].short+'</span>';}
+/* sides that round a dish out into a full meal (protein, carbs, fibre, veg). Seeded recipes carry their own;
+   recipes you add get a suggestion from what the ingredients are missing. All suggestions are meat- and dairy-free. */
+var SIDE_VEG=['Steamed broccoli','Simple green salad with lemon','Roasted carrots','Steamed green beans','Cucumber and tomato salad','Roasted zucchini'];
+var SIDE_CARB=['Brown rice','Roasted baby potatoes','Quinoa or whole-wheat couscous','Whole-grain bread'];
+var SIDE_PROT=['Roasted chickpeas','Steamed edamame','Lemony white bean salad'];
+var SIDE_FIBRE=['Simple green salad with lemon','Lentil salad'];
+var HAS_PROTEIN=/\b(chicken|beef|turkey|lamb|veal|brisket|steak|sausages?|meatballs?|hot ?dogs?|salmon|tuna|cod|tilapia|fish|eggs?|tofu|tempeh|seitan|lentils?|chickpeas?|beans?|edamame|cheese|ricotta|mozzarella|cheddar|parmesan|feta|paneer|yogh?urt|hummus|falafel)\b/;
+var HAS_CARB=/\b(rice|pasta|noodles?|spaghetti|macaroni|penne|ziti|orzo|couscous|quinoa|barley|potatoes?|gnocchi|bread|tortillas?|pita|wraps?|buns?|naan|toast|oats|pancakes?|crust|ravioli|tortellini|dumplings?|crackers?|fettuccine|lasagna)\b/;
+var HAS_VEG=/\b(broccoli|carrots?|zucchini|spinach|peppers?|tomato(?:es)?|cucumbers?|lettuce|cabbage|kale|green beans|asparagus|peas|cauliflower|eggplants?|mushrooms?|celery|squash|bok choy|snap peas|salad|vegetables?|parsnips?|sweet potatoes?|arugula|chard|leeks?|beets?)\b/g;
+function suggestSides(r){
+  var t=r.ingredients.join(' ').toLowerCase(),h=0,i;
+  for(i=0;i<r.name.length;i++)h=(h*31+r.name.charCodeAt(i))>>>0;
+  var pick=function(a){return a[h%a.length];},seen={},veg=0,out=[];
+  (t.match(HAS_VEG)||[]).forEach(function(m){if(!seen[m]){seen[m]=1;veg++;}});
+  if(veg<2)out.push(pick(SIDE_VEG));
+  if(!HAS_PROTEIN.test(t))out.push(pick(SIDE_PROT));
+  if(!HAS_CARB.test(t))out.push(pick(SIDE_CARB));
+  if(!out.length)out.push(pick(SIDE_FIBRE));
+  return out.slice(0,2);
+}
+function sidesOf(r){return r.sides&&r.sides.length?r.sides:suggestSides(r);}
+function sidesHtml(r){var s=sidesOf(r);return s.length?'<p class="sides"><b>Round it out:</b> '+s.map(esc).join(' + ')+'</p>':'';}
+window.__wtSuggestSides=suggestSides;
 function metaRow(r,extra){
-  return '<div class="meta"><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+(extra||'')+'</div>';
+  return '<div class="meta"><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+(extra||'')+'</div>';
 }
 function detailHtml(r){
   var src='';
@@ -370,7 +397,7 @@ function dayCard(d,i){
   }
   var open=S.expanded===i;
   return '<article class="daycard"><div class="tab">'+tabLabel(i)+'</div>'+photo(r,96)+
-    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+
+    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+sidesHtml(r)+
     (open?detailHtml(r):'')+
     '<div class="dc-actions"><button class="btn-ghost" data-action="view-day" data-i="'+i+'">'+(open?'▴ Hide recipe':'▾ View recipe')+'</button>'+
     '<button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
@@ -409,7 +436,7 @@ function renderBox(){
   $('boxList').innerHTML='<div class="bgrid">'+list.map(function(r){
     var inW=iw[r.id];
     return '<div class="bcard">'+photo(r,72)+'<div class="bbody"><div class="row"><p class="bname">'+esc(r.name)+'</p>'+stamp(r,true)+'</div>'+
-      metaRow(r,inW?'<span class="pill">in this week</span>':'')+
+      metaRow(r,inW?'<span class="pill">in this week</span>':'')+sidesHtml(r)+
       '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+
       (r.custom?'<button class="btn-ghost danger" data-action="remove" data-id="'+esc(r.id)+'"'+(inW?' disabled title="In this week’s plan: swap it out first"':'')+'>Remove</button>':'')+
       '</div></div></div>';
@@ -429,7 +456,7 @@ function viewRecipe(id){
   var r=S.map[id];if(!r)return;
   openModal('<div class="photo-wrap">'+photo(r,140)+'<button class="xbtn" data-action="close" aria-label="Close">×</button></div>'+
     '<div style="padding:20px"><div class="row"><h3 class="rname" style="font-size:19px">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+
-    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+
+    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+sidesHtml(r)+
     detailHtml(r)+'</div>',true);
 }
 
@@ -946,6 +973,7 @@ async function runImport(){
     var cls=classifyImport(j.name,ings);
     $('fName').value=String(j.name).slice(0,120);
     if(Number(j.minutes)>0)$('fMin').value=Math.round(Number(j.minutes));
+    $('fServ').value=Number(j.servings)>=1&&Number(j.servings)<=99?Math.round(Number(j.servings)):'';
     $('fIng').value=ings.join('\n');
     $('fSteps').value=steps.join('\n');
     $('fCat').value=cls.category;
@@ -971,7 +999,8 @@ function openAdd(){
   '<label class="field"><span>Recipe name</span><input id="fName" placeholder="e.g. Grandma’s brisket"></label>'+
   '<div class="two"><label class="field"><span>Category</span><select id="fCat"><option value="meat">Meat</option><option value="dairy" selected>Dairy</option><option value="pareve">Pareve</option></select></label>'+
   '<label class="field"><span>Total time (minutes)</span><input id="fMin" type="number" min="0" value="20"></label></div>'+
-  '<label class="field"><span>Cooking style (optional)</span><select id="fStyle"><option value="">Any</option><option value="slow-cooker">Slow cooker</option><option value="instant-pot">Instant Pot</option><option value="one-pot">One-pot</option></select></label>'+
+  '<div class="two"><label class="field"><span>Cooking style (optional)</span><select id="fStyle"><option value="">Any</option><option value="slow-cooker">Slow cooker</option><option value="instant-pot">Instant Pot</option><option value="one-pot">One-pot</option></select></label>'+
+  '<label class="field"><span>Serves (optional)</span><input id="fServ" type="number" min="1" max="99" inputmode="numeric" placeholder="e.g. 4"></label></div>'+
   '<label class="cb"><input id="fKid" type="checkbox" checked> Toddler-friendly</label>'+
   '<label class="field"><span>Ingredients (one per line)</span><textarea id="fIng" rows="4"></textarea></label>'+
   '<label class="field"><span>Steps (one per line)</span><textarea id="fSteps" rows="4"></textarea></label>'+
@@ -985,6 +1014,7 @@ function saveRecipe(){
   if(!name){var e=$('fErr');e.textContent='Give the recipe a name.';e.hidden=false;return;}
   var rec={name:name,category:$('fCat').value,minutes:Number($('fMin').value)||0,kidFriendly:$('fKid').checked,style:$('fStyle').value,
     ingredients:lines($('fIng').value),instructions:lines($('fSteps').value),custom:true,addedAt:Date.now()};
+  var sv=Math.round(Number($('fServ').value));if(sv>=1&&sv<=99)rec.servings=sv;
   if(importSource)rec.sourceUrl=importSource;
   closeModal();
   writeDocs([{path:'recipes/'+newId(),data:rec}]);
