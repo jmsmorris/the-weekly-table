@@ -85,6 +85,39 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  const pick=a.querySelector('[data-action=swap-pick]:not([disabled])');const newId=pick.dataset.id;pick.click();await sleep(200);
  await B.__wtPoll();await sleep(100);
  ok(B.document.querySelectorAll('.daycard')[1].textContent.includes(R(newId).name),'B sees A’s swap after polling');
+ // 4b. switch two days without dropping either dinner
+ { const plan0=()=>doc(code,'planner/state').plan.map(d=>d.recipeId);
+   const names=d=>[...d.querySelectorAll('.daycard .rname')].map(x=>x.textContent);
+   const before=plan0(),nm0=names(a);
+   ok(a.querySelectorAll('[data-action=move]').length===7,'every day card has a switch-day button');
+   a.querySelectorAll('[data-action=move]')[0].click();
+   const opts=[...a.querySelectorAll('[data-action=move-pick]')];
+   ok(opts.length===6&&!opts.some(o=>o.dataset.j==='0'),'switch-day lists the six other days');
+   ok(opts.find(o=>o.dataset.j==='1').textContent.includes(nm0[1]),'each option names the dinner on that day');
+   const fri=opts.find(o=>o.dataset.j==='4'),monShab=R(before[0]).shabbat;
+   ok(fri.disabled===!monShab,'Friday is only offered when the dinner moving there is Shabbat-style ('+(monShab?'it is':'it is not')+')');
+   opts.find(o=>o.dataset.j==='1').click();await sleep(200);
+   const after=plan0();
+   ok(after[0]===before[1]&&after[1]===before[0],'Monday and Tuesday trade places');
+   ok(after.slice(2).join()===before.slice(2).join()&&[...after].sort().join()===[...before].sort().join(),'nothing else changes and no dinner is dropped');
+   ok(names(a)[0]===nm0[1]&&names(a)[1]===nm0[0]&&!a.getElementById('modal').firstChild,'the cards show the new order and the dialog closes');
+   ok(doc(code,'planner/state').plan[0].day==='Monday'&&doc(code,'planner/state').plan[1].day==='Tuesday','day labels stay in place');
+   await B.__wtPoll();await sleep(100);
+   ok(names(b)[0]===nm0[1]&&names(b)[1]===nm0[0],'the other device sees the switch');
+   // Friday: a Shabbat dinner may move to another day, and a non-Shabbat dinner may not take Friday
+   const fp=plan0();
+   a.querySelectorAll('[data-action=move]')[4].click();
+   const fopts=[...a.querySelectorAll('[data-action=move-pick]')];
+   ok(fopts.every(o=>o.disabled===!R(fp[+o.dataset.j]).shabbat),'moving Friday’s dinner only offers days whose dinner is Shabbat-style');
+   const bad=fopts.find(o=>o.disabled);if(bad){bad.click();await sleep(100);ok(plan0().join()===fp.join(),'a blocked switch changes nothing');}
+   a.querySelector('[data-action=close]').click();
+   const friOk=fopts.find(o=>!o.disabled);
+   if(friOk){a.querySelectorAll('[data-action=move]')[4].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j===friOk.dataset.j).click();await sleep(200);
+     ok(R(plan0()[4]).shabbat&&R(plan0()[4]).category==='meat','Friday is still a Shabbat-style meat dish after a switch');}
+   // meat count unchanged by any switch
+   ok(plan0().filter(id=>R(id).category==='meat').length===before.filter(id=>R(id).category==='meat').length,'the number of meat nights is unchanged');
+   // switch back so later steps see the original order
+   a.querySelectorAll('[data-action=move]')[0].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j==='1').click();await sleep(200); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
  importReply={name:'Slow Cooker Chicken & Rice',minutes:375,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};

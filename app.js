@@ -365,14 +365,16 @@ function dayCard(d,i){
   var r=S.map[d.recipeId];
   if(!r){
     return '<article class="daycard"><div class="tab">'+tabLabel(i)+'</div><div class="dc-body" style="padding-top:22px"><h3 class="rname">This recipe is no longer in the box</h3>'+
-      '<div class="dc-actions"><button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button></div></div></article>';
+      '<div class="dc-actions"><button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
+      '<button class="btn-ghost" data-action="move" data-i="'+i+'">⇄ Switch day</button></div></div></article>';
   }
   var open=S.expanded===i;
   return '<article class="daycard"><div class="tab">'+tabLabel(i)+'</div>'+photo(r,96)+
     '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+
     (open?detailHtml(r):'')+
     '<div class="dc-actions"><button class="btn-ghost" data-action="view-day" data-i="'+i+'">'+(open?'▴ Hide recipe':'▾ View recipe')+'</button>'+
-    '<button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button></div></div></article>';
+    '<button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
+    '<button class="btn-ghost" data-action="move" data-i="'+i+'">⇄ Switch day</button></div></div></article>';
 }
 function renderWeek(){
   var el=$('week');
@@ -457,6 +459,36 @@ function openSwap(i,showRecent){
   openModal(mhead('Swap '+DAYS[i]+'’s recipe','Currently: '+esc(cur?cur.name:'(removed)')+(i===FRIDAY?'. Friday stays a Shabbat-style meat-and-veggies dinner.':''))+
     '<label class="check"><input type="checkbox" id="swapRecent"'+(showRecent?' checked':'')+'> Include recipes used in the last '+HISTORY_DEPTH+' weeks</label>'+
     '<div class="list">'+(groups||'<p class="empty">Nothing else available. Try including recently used recipes, or save a new one.</p>')+'</div>');
+}
+
+/* switch two days: the two dinners trade places, nothing leaves the menu */
+function moveBlock(plan,i,j){
+  // Friday only takes Shabbat-style dishes (when the box has any), the same rule the swap picker uses
+  var hasShab=S.recipes.some(function(r){return r.shabbat;});
+  function bad(day,id){var r=S.map[id];return day===FRIDAY&&hasShab&&!(r&&r.shabbat);}
+  if(bad(j,plan[i].recipeId))return DAYS[j]+' is Shabbat-style only';
+  if(bad(i,plan[j].recipeId))return 'Not a Shabbat-style dish';
+  return '';
+}
+function openMove(i){
+  var plan=S.planner.plan;if(!plan||!plan[i])return;
+  var cur=S.map[plan[i].recipeId];
+  var rows=plan.map(function(d,j){
+    if(j===i)return '';
+    var r=S.map[d.recipeId],why=moveBlock(plan,i,j);
+    return '<button class="opt" data-action="move-pick" data-i="'+i+'" data-j="'+j+'"'+(why?' disabled':'')+'><span><b>'+esc(DAYS[j])+'</b> · '+esc(r?emojiOf(r)+' '+r.name:'(removed recipe)')+'</span><small>'+esc(why||'switch')+'</small></button>';
+  }).join('');
+  openModal(mhead('Switch '+DAYS[i]+'’s dinner with…','Today: '+esc(cur?cur.name:'(removed recipe)')+'. The two dinners trade places, so nothing is dropped from the menu.'+(i===FRIDAY?' Friday stays Shabbat-style.':''))+
+    '<div class="list">'+rows+'</div>');
+}
+function doMove(i,j){
+  var p=S.planner;if(!p.plan||!p.plan[i]||!p.plan[j]||i===j)return;
+  if(moveBlock(p.plan,i,j)){closeModal();toast(moveBlock(p.plan,i,j)+'.');return;}
+  var plan=p.plan.map(function(d,k){return k===i?{day:d.day,recipeId:p.plan[j].recipeId}:k===j?{day:d.day,recipeId:p.plan[i].recipeId}:d;});
+  if(S.expanded===i)S.expanded=j;else if(S.expanded===j)S.expanded=i;
+  closeModal();
+  writeDocs([{path:'planner/state',data:{plan:plan,weekStart:p.weekStart||targetWeekStart(),history:p.history,updatedAt:Date.now()}}]);
+  toast(DAYS[i]+' and '+DAYS[j]+' switched.');
 }
 
 /* forecast override */
@@ -993,6 +1025,8 @@ document.addEventListener('click',function(e){
   else if(a==='view-recipe')viewRecipe(t.dataset.id);
   else if(a==='swap')openSwap(Number(t.dataset.i),false);
   else if(a==='swap-pick'&&swapState)doSwap(swapState.i,t.dataset.id);
+  else if(a==='move')openMove(Number(t.dataset.i));
+  else if(a==='move-pick')doMove(Number(t.dataset.i),Number(t.dataset.j));
   else if(a==='filter'){S.filter=t.dataset.f;renderBox();}
   else if(a==='add-open')openAdd();
   else if(a==='add-save')saveRecipe();
