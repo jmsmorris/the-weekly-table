@@ -29,7 +29,7 @@ var S={
   code:'',docs:{},known:{},
   recipes:[],map:{},
   planner:{plan:null,weekStart:'',history:[]},
-  have:{},
+  have:{},ratings:{},
   override:null,
   settings:{name:'Hamilton, ON',lat:43.2557,lon:-79.8711},
   live:{},liveAt:0,liveErr:false,
@@ -122,6 +122,8 @@ function rebuild(){
   Object.keys(S.docs).forEach(function(p){if(p.indexOf('recipes/')===0&&S.docs[p])rs.push(normRecipe(p.slice(8),S.docs[p]));});
   rs.sort(function(a,b){return a.name.localeCompare(b.name);});
   S.recipes=rs;S.map={};rs.forEach(function(r){S.map[r.id]=r;});
+  S.ratings={};
+  Object.keys(S.docs).forEach(function(p){if(p.indexOf('ratings/')===0&&S.docs[p]){var v=Number(S.docs[p].v);if(v===1||v===-1)S.ratings[p.slice(8)]=v;}});
   S.planner=normPlanner(S.docs['planner/state']);
   S.override=normOverride(S.docs['planner/weather']);
   S.settings=normSettings(S.docs['planner/settings']);
@@ -286,24 +288,30 @@ function tabLabel(i){
 
 /* ---------- plan logic ---------- */
 function excludedIds(history){var s={};history.slice(-HISTORY_DEPTH).forEach(function(w){w.recipeIds.forEach(function(id){s[id]=1;});});return s;}
-function pickOne(pool,taken,ex,t){
+var LIKE_BOOST=3;
+// Thumbs-down recipes drop out of rotation; thumbs-up recipes are LIKE_BOOST times as likely. Preference order for a slot:
+// not disliked and not used in the last 4 weeks, then not disliked (a repeat), then anything (so Friday always gets a Shabbat dish).
+function pickOne(pool,taken,ex,t,ratings){
+  ratings=ratings||{};
   var avail=pool.filter(function(r){return !taken[r.id];});
-  var fresh=avail.filter(function(r){return !ex[r.id];});
-  var src=fresh.length?fresh:avail;
+  var ok=avail.filter(function(r){return ratings[r.id]!==-1;});
+  var fresh=ok.filter(function(r){return !ex[r.id];});
+  var src=fresh.length?fresh:(ok.length?ok:avail);
   if(!src.length)return null;
-  var tot=0;src.forEach(function(r){tot+=weightFor(r,t);});
+  var w=function(r){return weightFor(r,t)*(ratings[r.id]===1?LIKE_BOOST:1);};
+  var tot=0;src.forEach(function(r){tot+=w(r);});
   var x=Math.random()*tot;
-  for(var i=0;i<src.length;i++){x-=weightFor(src[i],t);if(x<=0)return src[i];}
+  for(var i=0;i<src.length;i++){x-=w(src[i]);if(x<=0)return src[i];}
   return src[src.length-1];
 }
-function generateWeek(recipes,history,highs){
+function generateWeek(recipes,history,highs,ratings){
   var ex=excludedIds(history);
   var meat=recipes.filter(function(r){return r.category==='meat';});
   var rest=recipes.filter(function(r){return r.category!=='meat';});
   var shab=meat.filter(function(r){return r.shabbat;});
   var taken={},days=[null,null,null,null,null,null,null];
   function place(i,pool){
-    var r=pickOne(pool,taken,ex,highs[i])||pickOne(recipes,taken,{},highs[i])||recipes[0];
+    var r=pickOne(pool,taken,ex,highs[i],ratings)||pickOne(recipes,taken,{},highs[i],ratings)||recipes[0];
     taken[r.id]=1;days[i]=r;
   }
   place(FRIDAY,shab.length?shab:meat);
@@ -337,9 +345,29 @@ function suggestSides(r){
   if(!out.length)out.push(pick(SIDE_FIBRE));
   return out.slice(0,2);
 }
+/* thumbs up / thumbs down: tap again to clear. One small doc per recipe (ratings/<id>) so two phones never overwrite each other. */
+function rateBtns(r){
+  var v=S.ratings[r.id]||0,n=esc(r.name);
+  return '<button type="button" class="rbtn up'+(v===1?' on':'')+'" data-action="rate" data-id="'+esc(r.id)+'" data-v="1" aria-pressed="'+(v===1)+'" aria-label="Thumbs up for '+n+'" title="We liked it">👍</button>'+
+         '<button type="button" class="rbtn down'+(v===-1?' on':'')+'" data-action="rate" data-id="'+esc(r.id)+'" data-v="-1" aria-pressed="'+(v===-1)+'" aria-label="Thumbs down for '+n+'" title="Not for us">👎</button>';
+}
+function rateRow(r){return '<div class="raterow"><span>Tried it?</span>'+rateBtns(r)+'</div>';}
+function syncRateButtons(){
+  [].forEach.call(document.querySelectorAll('[data-action=rate]'),function(b){
+    var on=(S.ratings[b.dataset.id]||0)===Number(b.dataset.v);
+    b.classList.toggle('on',on);b.setAttribute('aria-pressed',on?'true':'false');
+  });
+}
+function setRating(id,v){
+  var r=S.map[id];if(!r)return;
+  var next=(S.ratings[id]||0)===v?0:v;
+  if(next)writeDocs([{path:'ratings/'+id,data:{v:next,at:Date.now()}}]);else removeDoc('ratings/'+id);
+  syncRateButtons();
+  toast(next===1?'Liked: “'+r.name+'” will come up more often.':next===-1?'Disliked: “'+r.name+'” is out of rotation.':'Rating cleared for “'+r.name+'”.');
+}
 function sidesOf(r){return r.sides&&r.sides.length?r.sides:suggestSides(r);}
 function sidesHtml(r){var s=sidesOf(r);return s.length?'<p class="sides"><b>Round it out:</b> '+s.map(esc).join(' + ')+'</p>':'';}
-window.__wtSuggestSides=suggestSides;
+window.__wtSuggestSides=suggestSides;window.__wtGenerate=generateWeek;
 function metaRow(r,extra){
   return '<div class="meta"><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+(extra||'')+'</div>';
 }
@@ -397,7 +425,7 @@ function dayCard(d,i){
   }
   var open=S.expanded===i;
   return '<article class="daycard"><div class="tab">'+tabLabel(i)+'</div>'+photo(r,96)+
-    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+sidesHtml(r)+
+    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+sidesHtml(r)+rateRow(r)+
     (open?detailHtml(r):'')+
     '<div class="dc-actions"><button class="btn-ghost" data-action="view-day" data-i="'+i+'">'+(open?'▴ Hide recipe':'▾ View recipe')+'</button>'+
     '<button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
@@ -414,7 +442,7 @@ function renderWeek(){
   el.innerHTML='<div class="week">'+plan.map(dayCard).join('')+'</div>';
 }
 function renderChips(){
-  var defs=[['all','All'],['meat','Meat'],['dairy','Dairy'],['pareve','Pareve'],['slow-cooker','Slow cooker'],['instant-pot','Instant Pot'],['one-pot','One-pot'],['notweek','Not in this week']];
+  var defs=[['all','All'],['meat','Meat'],['dairy','Dairy'],['pareve','Pareve'],['slow-cooker','Slow cooker'],['instant-pot','Instant Pot'],['one-pot','One-pot'],['notweek','Not in this week'],['liked','👍 Liked'],['disliked','👎 Disliked']];
   $('chips').innerHTML=defs.map(function(d){return '<button class="chip" data-action="filter" data-f="'+d[0]+'" aria-pressed="'+(S.filter===d[0])+'">'+d[1]+'</button>';}).join('');
 }
 function renderBox(){
@@ -424,7 +452,9 @@ function renderBox(){
   renderChips();
   var iw=inWeekSet(),q=S.q.trim().toLowerCase();
   var list=S.recipes.filter(function(r){
-    if(S.filter==='notweek'){if(iw[r.id])return false;}
+    if(S.filter==='liked'){if(S.ratings[r.id]!==1)return false;}
+    else if(S.filter==='disliked'){if(S.ratings[r.id]!==-1)return false;}
+    else if(S.filter==='notweek'){if(iw[r.id])return false;}
     else if(STYLES[S.filter]){if(r.style!==S.filter)return false;}
     else if(S.filter!=='all'&&r.category!==S.filter)return false;
     if(q&&(r.name+' '+r.ingredients.join(' ')).toLowerCase().indexOf(q)===-1)return false;
@@ -434,10 +464,10 @@ function renderBox(){
   if(!S.loaded){$('boxList').innerHTML='<div class="loading"><span class="spin"></span>Loading recipes…</div>';return;}
   if(!list.length){$('boxList').innerHTML='<p class="empty">'+(S.recipes.length?'No recipes match that search.':'Nothing here yet.')+'</p>';return;}
   $('boxList').innerHTML='<div class="bgrid">'+list.map(function(r){
-    var inW=iw[r.id];
-    return '<div class="bcard">'+photo(r,72)+'<div class="bbody"><div class="row"><p class="bname">'+esc(r.name)+'</p>'+stamp(r,true)+'</div>'+
-      metaRow(r,inW?'<span class="pill">in this week</span>':'')+sidesHtml(r)+
-      '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+
+    var inW=iw[r.id],rt=S.ratings[r.id]||0;
+    return '<div class="bcard'+(rt===-1?' disliked':'')+'">'+photo(r,72)+'<div class="bbody"><div class="row"><p class="bname">'+esc(r.name)+'</p>'+stamp(r,true)+'</div>'+
+      metaRow(r,(inW?'<span class="pill">in this week</span>':'')+(rt===1?'<span class="pill">👍 liked</span>':rt===-1?'<span class="pill">👎 out of rotation</span>':''))+sidesHtml(r)+
+      '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+rateBtns(r)+
       (r.custom?'<button class="btn-ghost danger" data-action="remove" data-id="'+esc(r.id)+'"'+(inW?' disabled title="In this week’s plan: swap it out first"':'')+'>Remove</button>':'')+
       '</div></div></div>';
   }).join('')+'</div>';
@@ -456,7 +486,7 @@ function viewRecipe(id){
   var r=S.map[id];if(!r)return;
   openModal('<div class="photo-wrap">'+photo(r,140)+'<button class="xbtn" data-action="close" aria-label="Close">×</button></div>'+
     '<div style="padding:20px"><div class="row"><h3 class="rname" style="font-size:19px">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+
-    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+sidesHtml(r)+
+    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+sidesHtml(r)+rateRow(r)+
     detailHtml(r)+'</div>',true);
 }
 
@@ -469,22 +499,26 @@ function openSwap(i,showRecent){
   var ex=excludedIds(S.planner.history);
   var mc=meatCount(plan),curMeat=cur&&cur.category==='meat';
   var hasShab=S.recipes.some(function(r){return r.shabbat;});
-  var opts=S.recipes.filter(function(r){
+  var optsAll=S.recipes.filter(function(r){
     if(r.id===plan[i].recipeId||used[r.id])return false;
     if(!showRecent&&ex[r.id])return false;
     if(i===FRIDAY&&hasShab&&!r.shabbat)return false;
     return true;
   });
+  var liked=function(r){return S.ratings[r.id]===1;},dis=function(r){return S.ratings[r.id]===-1;};
+  var opts=optsAll.filter(function(r){return !dis(r);}),hidden=optsAll.length-opts.length;
+  if(!opts.length){opts=optsAll;hidden=0;}
   var groups=['meat','dairy','pareve'].map(function(c){
-    var items=opts.filter(function(r){return r.category===c;});
+    var items=opts.filter(function(r){return r.category===c;}).sort(function(a,b){return (liked(b)?1:0)-(liked(a)?1:0);});
     if(!items.length)return '';
     return '<div class="group"><p class="dlabel" style="color:var(--'+c+')">'+CAT[c].label+'</p>'+items.map(function(r){
       var blocked=r.category==='meat'&&(mc-(curMeat?1:0)+1)>3;
-      return '<button class="opt" data-action="swap-pick" data-id="'+esc(r.id)+'"'+(blocked?' disabled':'')+'><span>'+esc(emojiOf(r))+' '+esc(r.name)+'</span><small>'+fmtTime(r.minutes)+(blocked?' · meat limit':'')+'</small></button>';
+      return '<button class="opt" data-action="swap-pick" data-id="'+esc(r.id)+'"'+(blocked?' disabled':'')+'><span>'+(liked(r)?'👍 ':'')+esc(emojiOf(r))+' '+esc(r.name)+'</span><small>'+fmtTime(r.minutes)+(dis(r)?' · disliked':'')+(blocked?' · meat limit':'')+'</small></button>';
     }).join('')+'</div>';
   }).join('');
   openModal(mhead('Swap '+DAYS[i]+'’s recipe','Currently: '+esc(cur?cur.name:'(removed)')+(i===FRIDAY?'. Friday stays a Shabbat-style meat-and-veggies dinner.':''))+
     '<label class="check"><input type="checkbox" id="swapRecent"'+(showRecent?' checked':'')+'> Include recipes used in the last '+HISTORY_DEPTH+' weeks</label>'+
+    (hidden?'<p style="font-size:12px;color:var(--soft);margin:6px 0">Hiding '+hidden+' recipe'+(hidden===1?'':'s')+' with a thumbs down.</p>':'')+
     '<div class="list">'+(groups||'<p class="empty">Nothing else available. Try including recently used recipes, or save a new one.</p>')+'</div>');
 }
 
@@ -1024,6 +1058,7 @@ function removeRecipe(id){
   var r=S.map[id];if(!r||!r.custom)return;
   if(!window.confirm('Remove “'+r.name+'” from the recipe box for everyone?'))return;
   removeDoc('recipes/'+id);
+  if(S.ratings[id])removeDoc('ratings/'+id);
 }
 
 /* ---------- plan writes ---------- */
@@ -1032,7 +1067,7 @@ async function doGenerate(){
   var ws=targetWeekStart(),hf=highsFor(ws),p=S.planner,hist=p.history;
   if(p.plan){hist=hist.concat([{id:Date.now(),recipeIds:p.plan.map(function(d){return d.recipeId;})}]).slice(-HISTORY_DEPTH);}
   S.expanded=null;
-  writeDocs([{path:'planner/state',data:{plan:generateWeek(S.recipes,hist,hf.highs),weekStart:ws,history:hist,updatedAt:Date.now()}}]);
+  writeDocs([{path:'planner/state',data:{plan:generateWeek(S.recipes,hist,hf.highs,S.ratings),weekStart:ws,history:hist,updatedAt:Date.now()}}]);
 }
 function doSwap(i,id){
   var p=S.planner;if(!p.plan)return;
@@ -1078,6 +1113,7 @@ document.addEventListener('click',function(e){
   else if(a==='copy-list')copyText($('listText'),'Shopping list copied.');
   else if(a==='save-list')saveList();
   else if(a==='have-clear')clearHave();
+  else if(a==='rate')setRating(t.dataset.id,Number(t.dataset.v));
   else if(a==='fix-route')pickRoute(t.dataset.route);
   else if(a==='apply-swaps')applySwaps();
   else if(a==='undo-swaps')undoSwaps();

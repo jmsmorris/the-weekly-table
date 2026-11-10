@@ -144,6 +144,70 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    ok(keys.every(k=>JSON.stringify(Object.assign({},server.docs[k].data,{servings:0,sides:0}))===before[k]),'nothing else in those recipes changes');
    ok(custom.every(([k,v])=>JSON.stringify(server.docs[k].data)===v),'your own recipes are not touched');
    ok(server.docs[code+'|meta/seed'].data.version===2,'the seed version moves on so this runs once'); }
+ // 4e. thumbs up and thumbs down
+ { const seedR=JSON.parse(recipesJson).recipes,planIds=()=>doc(code,'planner/state').plan.map(d=>d.recipeId);
+   const rid=planIds()[2],nm=R(rid).name;
+   const boxCard=(d,name)=>[...d.querySelectorAll('.bcard')].find(c=>c.querySelector('.bname').textContent===name);
+   const dayBtn=(d,v)=>d.querySelectorAll('.daycard')[2].querySelector('[data-action=rate][data-v="'+v+'"]');
+   const rating=id=>doc(code,'ratings/'+id)&&doc(code,'ratings/'+id).v;
+   ok(a.querySelectorAll('.daycard [data-action=rate]').length===14,'every day card has thumbs up and thumbs down');
+   dayBtn(a,1).click();await sleep(200);
+   ok(rating(rid)===1,'a thumbs up is saved for the household');
+   ok(dayBtn(a,1).classList.contains('on')&&dayBtn(a,1).getAttribute('aria-pressed')==='true'&&dayBtn(a,-1).getAttribute('aria-pressed')==='false','the thumbs up shows as pressed');
+   ok(/liked/.test(boxCard(a,nm).textContent),'the recipe box marks it as liked');
+   a.querySelector('[data-action=filter][data-f=liked]').click();
+   ok(a.querySelectorAll('.bcard').length===1&&boxCard(a,nm),'the Liked filter lists it');
+   a.querySelector('[data-action=filter][data-f=all]').click();
+   await B.__wtPoll();await sleep(100);
+   ok(b.querySelectorAll('.daycard')[2].querySelector('[data-action=rate][data-v="1"]').getAttribute('aria-pressed')==='true','the other device sees the rating');
+   dayBtn(a,1).click();await sleep(200);
+   ok(rating(rid)===undefined&&dayBtn(a,1).getAttribute('aria-pressed')==='false','tapping again clears the rating');
+   dayBtn(a,-1).click();await sleep(200);
+   ok(rating(rid)===-1&&/out of rotation/.test(boxCard(a,nm).textContent)&&boxCard(a,nm).classList.contains('disliked'),'a thumbs down marks it out of rotation');
+   ok(planIds()[2]===rid,'rating a dinner already in the week does not change the week');
+   dayBtn(a,1).click();await sleep(200);
+   ok(rating(rid)===1,'switching from thumbs down to thumbs up replaces the rating');
+   dayBtn(a,1).click();await sleep(200);
+   // swap picker hides disliked recipes and lists liked ones first
+   const other=seedR.find(r=>!planIds().includes(r.id)&&r.category==='dairy'&&!r.shabbat),otherId=other.id;
+   const picks=()=>[...a.querySelectorAll('[data-action=swap-pick]')].map(x=>x.dataset.id);
+   a.querySelectorAll('[data-action=swap]')[1].click();
+   ok(picks().includes(otherId)&&!/Hiding/.test(a.getElementById('modal').textContent),'before a thumbs down the recipe is offered in the swap picker');
+   a.querySelector('[data-action=close]').click();
+   boxCard(a,other.name).querySelector('[data-action=rate][data-v="-1"]').click();await sleep(200);
+   a.querySelectorAll('[data-action=swap]')[1].click();
+   ok(!picks().includes(otherId)&&/Hiding 1 recipe with a thumbs down/.test(a.getElementById('modal').textContent),'a disliked recipe is hidden from the swap picker, with a note');
+   a.querySelector('[data-action=close]').click();
+   const likedPick=seedR.find(r=>!planIds().includes(r.id)&&r.category==='dairy'&&!r.shabbat&&r.id!==otherId);
+   boxCard(a,likedPick.name).querySelector('[data-action=rate][data-v="1"]').click();await sleep(200);
+   a.querySelectorAll('[data-action=swap]')[1].click();
+   const firstDairy=a.querySelector('#modal .group:nth-of-type(1) [data-action=swap-pick]');
+   const dairyGroup=[...a.querySelectorAll('#modal .group')].find(g=>/dairy/i.test(g.querySelector('.dlabel').textContent));
+   ok(dairyGroup.querySelector('[data-action=swap-pick]').dataset.id===likedPick.id&&/👍/.test(dairyGroup.querySelector('[data-action=swap-pick]').textContent),'liked recipes are listed first in the swap picker');
+   a.querySelector('[data-action=close]').click();
+   boxCard(a,other.name).querySelector('[data-action=rate][data-v="-1"]').click();boxCard(a,likedPick.name).querySelector('[data-action=rate][data-v="1"]').click();await sleep(200);
+   ok(rating(otherId)===undefined&&rating(likedPick.id)===undefined,'ratings are cleared again');
+   // junk in a rating doc is ignored
+   const rid3=planIds()[3];server.docs[code+'|ratings/'+rid3]={data:{v:5},t:'tjunk'};await A.__wtPoll();await sleep(100);
+   ok(a.querySelectorAll('.daycard')[3].querySelectorAll('[data-action=rate].on').length===0,'an invalid rating value is ignored');
+   delete server.docs[code+'|ratings/'+rid3];await A.__wtPoll();await sleep(50); }
+ // 4f. ratings steer the generated week
+ { const G=A.__wtGenerate,recs=JSON.parse(recipesJson).recipes,highs=[15,15,15,15,15,15,15];
+   const weeks=(n,hist,rt)=>Array.from({length:n},()=>G(recs,hist,highs,rt));
+   const dis={};recs.forEach((r,i)=>{if(i%3===0&&!r.shabbat)dis[r.id]=-1;});
+   const wd=weeks(400,[],dis);
+   ok(wd.every(w=>w.every(d=>dis[d.recipeId]!==-1)),'disliked recipes never appear while other recipes can fill the week ('+Object.keys(dis).length+' disliked)');
+   const W2=recs.filter(r=>r.category!=='meat'&&r.warmth===2),liked={};W2.slice(0,4).forEach(r=>{liked[r.id]=1;});
+   const cnt={};weeks(800,[],liked).forEach(w=>w.forEach(d=>{cnt[d.recipeId]=(cnt[d.recipeId]||0)+1;}));
+   const lk=W2.slice(0,4).reduce((s,r)=>s+(cnt[r.id]||0),0)/4,ct=W2.slice(4).reduce((s,r)=>s+(cnt[r.id]||0),0)/(W2.length-4);
+   ok(lk>ct*2,'liked recipes come up more than twice as often as similar ones ('+(lk/ct).toFixed(1)+'x)');
+   const hist=[{id:1,recipeIds:W2.slice(0,4).map(r=>r.id)}];
+   ok(weeks(300,hist,liked).every(w=>w.every(d=>!liked[d.recipeId])),'a liked recipe still waits out the four-week rule');
+   const noShab={};recs.filter(r=>r.shabbat).forEach(r=>{noShab[r.id]=-1;});
+   ok(weeks(150,[],noShab).every(w=>{const f=recs.find(r=>r.id===w[4].recipeId);return f.shabbat&&f.category==='meat';}),'Friday is still a Shabbat dish even if every one is disliked');
+   const noMeat={};recs.filter(r=>r.category==='meat').forEach(r=>{noMeat[r.id]=-1;});
+   ok(weeks(150,[],noMeat).every(w=>w.filter(d=>recs.find(r=>r.id===d.recipeId).category==='meat').length===3),'the three meat nights are still filled if every meat dish is disliked');
+   ok(weeks(100,[],{}).every(w=>new Set(w.map(d=>d.recipeId)).size===7),'a week never repeats a dinner'); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
  importReply={name:'Slow Cooker Chicken & Rice',minutes:375,servings:6,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};
@@ -326,7 +390,11 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
   a.querySelector('[data-action=have-clear]').click();
   ok(toBuy().length===before&&boxes().every(c=>!c.checked),'untick all restores the full list');
  a.querySelector('[data-action=close]').click();
- const rm=a.querySelector('[data-action=remove]');ok(!!rm,'custom recipe has a remove button');rm.click();await sleep(150);
+ const rm=a.querySelector('[data-action=remove]');ok(!!rm,'custom recipe has a remove button');
+ const cid=rm.dataset.id;rm.closest('.bcard').querySelector('[data-action=rate][data-v="1"]').click();await sleep(150);
+ ok(!!doc(code,'ratings/'+cid),'your own recipes can be rated');
+ a.querySelector('[data-action=remove]').click();await sleep(150);
+ ok(!doc(code,'ratings/'+cid),'removing a recipe removes its rating too');
  ok(Object.keys(server.docs).filter(k=>k.startsWith(code+'|recipes/c-')).length===0,'custom recipe removed on server');
  // 12. leaving
  a.querySelector('[data-action=settings]').click();a.querySelector('[data-action=leave]').click();
