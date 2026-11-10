@@ -59,6 +59,7 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  ok(recipeDocs===112,'seeded 112 recipes ('+recipeDocs+')');
  ok(!!doc(code,'meta/seed'),'seed version recorded');
  ok(a.querySelectorAll('.bcard').length===112,'A shows 112 recipe cards');
+ ok([...a.querySelectorAll('.bcard [data-action=add-to-week]')].length===112&&[...a.querySelectorAll('.bcard [data-action=add-to-week]')].every(b=>b.disabled),'swap into week is disabled until a week is built');
  { const seed=JSON.parse(recipesJson).recipes;
    const DAIRY=/cheese|milk|butter|cream|yogh?urt|parmesan|feta|mozzarella|cheddar|ricotta|paneer/i,MEAT=/chicken|beef|turkey|lamb|brisket|steak|sausage|meatball|hot ?dog|bacon|\bham\b/i;
    ok(seed.every(r=>Number.isInteger(r.servings)&&r.servings>=1&&r.servings<=12),'every shipped recipe has a servings estimate');
@@ -208,6 +209,46 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    const noMeat={};recs.filter(r=>r.category==='meat').forEach(r=>{noMeat[r.id]=-1;});
    ok(weeks(150,[],noMeat).every(w=>w.filter(d=>recs.find(r=>r.id===d.recipeId).category==='meat').length===3),'the three meat nights are still filled if every meat dish is disliked');
    ok(weeks(100,[],{}).every(w=>new Set(w.map(d=>d.recipeId)).size===7),'a week never repeats a dinner'); }
+ // 4g. swap a recipe into the week from the recipe box
+ { const seedR=JSON.parse(recipesJson).recipes,planIds=()=>doc(code,'planner/state').plan.map(d=>d.recipeId);
+   const boxCard=(d,name)=>[...d.querySelectorAll('.bcard')].find(c=>c.querySelector('.bname').textContent===name);
+   const btn=(d,r)=>boxCard(d,r.name).querySelector('[data-action=add-to-week]');
+   const before=planIds(),inW=R(before[0]);
+   ok(btn(a,seedR.find(r=>r.id===before[0])).disabled,'a recipe already in the week can’t be swapped in again');
+   const dairy=seedR.find(r=>!before.includes(r.id)&&r.category==='dairy'&&!r.shabbat);
+   ok(!btn(a,dairy).disabled,'a recipe that isn’t in the week can be swapped in');
+   btn(a,dairy).click();
+   const rows=[...a.querySelectorAll('[data-action=place-pick]')];
+   ok(rows.length===7&&rows.every((o,j)=>o.textContent.includes(R(before[j]).name)),'the picker lists all seven days with their dinners');
+   ok(rows.map(o=>o.disabled).join()===[false,false,false,false,true,false,false].join()&&/Shabbat-style only/.test(rows[4].textContent),'Friday is closed to a recipe that isn’t Shabbat-style');
+   rows[1].click();await sleep(200);
+   const after=planIds();
+   ok(after[1]===dairy.id&&after.filter((id,j)=>j!==1).join()===before.filter((id,j)=>j!==1).join(),'the recipe replaces the dinner on the day you pick and nothing else changes');
+   ok(!after.includes(before[1])&&!a.getElementById('modal').firstChild,'the replaced dinner leaves the week and the dialog closes');
+   ok(btn(a,dairy).disabled&&/in this week/.test(boxCard(a,dairy.name).textContent),'the card now shows it is in the week');
+   await B.__wtPoll();await sleep(100);
+   ok(b.querySelectorAll('.daycard')[1].textContent.includes(dairy.name),'the other device sees it');
+   // the meat cap and Shabbat rule apply
+   const plan2=planIds(),meatDay=j=>R(plan2[j]).category==='meat';
+   const meat=seedR.find(r=>!plan2.includes(r.id)&&r.category==='meat'&&!r.shabbat);
+   btn(a,meat).click();
+   const mrows=[...a.querySelectorAll('[data-action=place-pick]')];
+   ok(mrows.every((o,j)=>o.disabled===(!meatDay(j)||j===4)),'a meat dish can only replace a meat night (3 meat nights), never Friday if it isn’t Shabbat-style');
+   ok(mrows.some(o=>/meat limit/.test(o.textContent)),'the picker says why a day is closed');
+   a.querySelector('[data-action=close]').click();
+   const shab=seedR.find(r=>!plan2.includes(r.id)&&r.shabbat);
+   btn(a,shab).click();
+   ok(![...a.querySelectorAll('[data-action=place-pick]')][4].disabled,'a Shabbat-style dish can take Friday');
+   [...a.querySelectorAll('[data-action=place-pick]')][4].click();await sleep(200);
+   ok(planIds()[4]===shab.id&&R(planIds()[4]).shabbat&&R(planIds()[4]).category==='meat'&&planIds().filter(id=>R(id).category==='meat').length===3,'swapping a Shabbat dish into Friday keeps three meat nights');
+   // from the recipe view too
+   const other=seedR.find(r=>!planIds().includes(r.id)&&r.category==='pareve'&&!r.shabbat);
+   boxCard(a,other.name).querySelector('[data-action=view-recipe]').click();
+   const vb=a.querySelector('#modal [data-action=add-to-week]');
+   ok(!!vb&&!vb.disabled,'the recipe view has a swap-into-week button');
+   vb.click();
+   ok(a.querySelectorAll('[data-action=place-pick]').length===7,'it opens the same day picker');
+   a.querySelector('[data-action=close]').click(); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
  importReply={name:'Slow Cooker Chicken & Rice',minutes:375,servings:6,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};

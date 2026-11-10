@@ -351,6 +351,10 @@ function rateBtns(r){
   return '<button type="button" class="rbtn up'+(v===1?' on':'')+'" data-action="rate" data-id="'+esc(r.id)+'" data-v="1" aria-pressed="'+(v===1)+'" aria-label="Thumbs up for '+n+'" title="We liked it">👍</button>'+
          '<button type="button" class="rbtn down'+(v===-1?' on':'')+'" data-action="rate" data-id="'+esc(r.id)+'" data-v="-1" aria-pressed="'+(v===-1)+'" aria-label="Thumbs down for '+n+'" title="Not for us">👎</button>';
 }
+function placeBtn(r){
+  var inW=inWeekSet()[r.id],no=!S.planner.plan;
+  return '<button type="button" class="btn-ghost" data-action="add-to-week" data-id="'+esc(r.id)+'"'+((inW||no)?' disabled title="'+(inW?'Already in this week':'Build a week first')+'"':'')+'>⟳ Swap into week</button>';
+}
 function rateRow(r){return '<div class="raterow"><span>Tried it?</span>'+rateBtns(r)+'</div>';}
 function syncRateButtons(){
   [].forEach.call(document.querySelectorAll('[data-action=rate]'),function(b){
@@ -467,7 +471,7 @@ function renderBox(){
     var inW=iw[r.id],rt=S.ratings[r.id]||0;
     return '<div class="bcard'+(rt===-1?' disliked':'')+'">'+photo(r,72)+'<div class="bbody"><div class="row"><p class="bname">'+esc(r.name)+'</p>'+stamp(r,true)+'</div>'+
       metaRow(r,(inW?'<span class="pill">in this week</span>':'')+(rt===1?'<span class="pill">👍 liked</span>':rt===-1?'<span class="pill">👎 out of rotation</span>':''))+sidesHtml(r)+
-      '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+rateBtns(r)+
+      '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+placeBtn(r)+rateBtns(r)+
       (r.custom?'<button class="btn-ghost danger" data-action="remove" data-id="'+esc(r.id)+'"'+(inW?' disabled title="In this week’s plan: swap it out first"':'')+'>Remove</button>':'')+
       '</div></div></div>';
   }).join('')+'</div>';
@@ -486,7 +490,7 @@ function viewRecipe(id){
   var r=S.map[id];if(!r)return;
   openModal('<div class="photo-wrap">'+photo(r,140)+'<button class="xbtn" data-action="close" aria-label="Close">×</button></div>'+
     '<div style="padding:20px"><div class="row"><h3 class="rname" style="font-size:19px">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+
-    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+sidesHtml(r)+rateRow(r)+
+    '<div class="meta"><span style="font-weight:700;color:var(--'+r.category+')">'+CAT[r.category].label+'</span><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+'</div>'+sidesHtml(r)+rateRow(r)+'<div style="margin-top:10px">'+placeBtn(r)+'</div>'+
     detailHtml(r)+'</div>',true);
 }
 
@@ -520,6 +524,34 @@ function openSwap(i,showRecent){
     '<label class="check"><input type="checkbox" id="swapRecent"'+(showRecent?' checked':'')+'> Include recipes used in the last '+HISTORY_DEPTH+' weeks</label>'+
     (hidden?'<p style="font-size:12px;color:var(--soft);margin:6px 0">Hiding '+hidden+' recipe'+(hidden===1?'':'s')+' with a thumbs down.</p>':'')+
     '<div class="list">'+(groups||'<p class="empty">Nothing else available. Try including recently used recipes, or save a new one.</p>')+'</div>');
+}
+
+/* put a recipe from the box into the week: it replaces the dinner on the day you pick (same rules as the swap picker) */
+function placeBlock(plan,j,r){
+  var hasShab=S.recipes.some(function(x){return x.shabbat;});
+  if(j===FRIDAY&&hasShab&&!r.shabbat)return 'Friday is Shabbat-style only';
+  var cur=S.map[plan[j].recipeId];
+  if(r.category==='meat'&&(meatCount(plan)-(cur&&cur.category==='meat'?1:0)+1)>3)return 'meat limit';
+  return '';
+}
+function openPlace(id){
+  var plan=S.planner.plan,r=S.map[id];if(!plan||!r)return;
+  if(inWeekSet()[id]){toast('“'+r.name+'” is already in this week.');return;}
+  var notes=[];
+  if(excludedIds(S.planner.history)[id])notes.push('used in the last '+HISTORY_DEPTH+' weeks');
+  if(S.ratings[id]===-1)notes.push('given a thumbs down');
+  var rows=plan.map(function(d,j){
+    var cur=S.map[d.recipeId],why=placeBlock(plan,j,r);
+    return '<button class="opt" data-action="place-pick" data-id="'+esc(id)+'" data-j="'+j+'"'+(why?' disabled':'')+'><span><b>'+esc(DAYS[j])+'</b> · '+esc(cur?emojiOf(cur)+' '+cur.name:'(removed recipe)')+'</span><small>'+esc(why||'replace')+'</small></button>';
+  }).join('');
+  openModal(mhead('Swap “'+esc(r.name)+'” into the week','Pick the day it should take. It replaces that day’s dinner.'+(notes.length?' Note: it was '+notes.join(' and ')+'.':''))+'<div class="list">'+rows+'</div>');
+}
+function doPlace(id,j){
+  var p=S.planner,r=S.map[id];if(!p.plan||!p.plan[j]||!r)return;
+  var why=inWeekSet()[id]?'It’s already in this week':placeBlock(p.plan,j,r);
+  if(why){closeModal();toast(why+'.');return;}
+  doSwap(j,id);
+  toast('“'+r.name+'” is on '+DAYS[j]+' now.');
 }
 
 /* switch two days: the two dinners trade places, nothing leaves the menu */
@@ -1090,6 +1122,8 @@ document.addEventListener('click',function(e){
   else if(a==='view-recipe')viewRecipe(t.dataset.id);
   else if(a==='swap')openSwap(Number(t.dataset.i),false);
   else if(a==='swap-pick'&&swapState)doSwap(swapState.i,t.dataset.id);
+  else if(a==='add-to-week')openPlace(t.dataset.id);
+  else if(a==='place-pick')doPlace(t.dataset.id,Number(t.dataset.j));
   else if(a==='move')openMove(Number(t.dataset.i));
   else if(a==='move-pick')doMove(Number(t.dataset.i),Number(t.dataset.j));
   else if(a==='filter'){S.filter=t.dataset.f;renderBox();}
