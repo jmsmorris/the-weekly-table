@@ -385,6 +385,52 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  // 10. wrong code
  const C=device('');await sleep(100);C.document.getElementById('joinCode').value='WRONGCODE1';C.document.querySelector('[data-action=join-household]').click();await sleep(150);
  ok(/No household found/.test(C.document.getElementById('week').textContent),'wrong code shows an error');
+ // 10b. skipped dinners
+ { const st=()=>doc(code,'planner/state'),ids=()=>st().plan.map(d=>d.recipeId);
+   const card=(d,i)=>d.querySelectorAll('.daycard')[i],sbtn=(d,i)=>card(d,i).querySelector('[data-action=skip]');
+   const recs=JSON.parse(recipesJson).recipes,highs=[15,15,15,15,15,15,15];
+   ok(a.querySelectorAll('.daycard [data-action=skip]').length===7,'every day card has a skipped button');
+   const p0=ids();
+   sbtn(a,0).click();await sleep(200);
+   ok(JSON.stringify(st().skipped)===JSON.stringify([p0[0]]),'marking a dinner skipped is saved with the week');
+   ok(sbtn(a,0).getAttribute('aria-pressed')==='true'&&card(a,0).classList.contains('skipped')&&/SKIPPED/.test(card(a,0).querySelector('.tab').textContent)&&/won’t count toward the 4-week cooldown/.test(card(a,0).textContent),'the card shows it as skipped and says what that means');
+   ok(/in this week · skipped/.test([...a.querySelectorAll('.bcard')].find(c=>c.querySelector('.bname').textContent===R(p0[0]).name).textContent),'the recipe box shows it as skipped too');
+   await B.__wtPoll();await sleep(100);
+   ok(card(b,0).classList.contains('skipped'),'the other device sees it');
+   a.querySelector('[data-action=export]').click();
+   const txt=a.getElementById('listText').value;
+   ok(!txt.includes(R(p0[0]).name)&&txt.includes(R(p0[1]).name)&&/Skipped dinners are left out/.test(a.getElementById('modal').textContent),'a skipped dinner is left off the shopping list');
+   a.querySelector('[data-action=close]').click();
+   // it follows the dinner when days are switched, and goes when the dinner is swapped out
+   a.querySelectorAll('[data-action=move]')[0].click();
+   [...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j==='1').click();await sleep(200);
+   ok(ids()[1]===p0[0]&&st().skipped[0]===p0[0]&&sbtn(a,1).getAttribute('aria-pressed')==='true'&&sbtn(a,0).getAttribute('aria-pressed')==='false','the skip follows the dinner when days are switched');
+   a.querySelectorAll('[data-action=move]')[1].click();
+   [...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j==='0').click();await sleep(200);
+   ok(ids()[0]===p0[0]&&sbtn(a,0).getAttribute('aria-pressed')==='true','…and back again');
+   sbtn(a,2).click();await sleep(200);
+   ok(st().skipped.length===2,'more than one dinner can be skipped');
+   a.querySelectorAll('[data-action=swap]')[2].click();
+   a.querySelector('[data-action=swap-pick]:not([disabled])').click();await sleep(200);
+   ok(JSON.stringify(st().skipped)===JSON.stringify([p0[0]])&&sbtn(a,2).getAttribute('aria-pressed')==='false','swapping a skipped dinner out clears its skip');
+   sbtn(a,0).click();await sleep(200);
+   ok(st().skipped.length===0&&sbtn(a,0).getAttribute('aria-pressed')==='false','tapping again clears the skip');
+   server.docs[code+'|planner/state'].data.skipped=['not-a-recipe',ids()[3],ids()[3]];server.docs[code+'|planner/state'].t='tskip';
+   await A.__wtPoll();await sleep(100);
+   ok(a.querySelectorAll('.daycard.skipped').length===1&&card(a,3).classList.contains('skipped'),'unknown or repeated skipped ids are ignored');
+   sbtn(a,3).click();await sleep(200);
+   ok(st().skipped.length===0,'…and a skip can be cleared');
+   // the cooldown: skipped dinners are not recorded in the history when the next week is made
+   sbtn(a,0).click();await sleep(200);
+   const before=ids();
+   a.querySelector('[data-action=generate]').click();await sleep(400);
+   const h=st().history,last=h[h.length-1];
+   ok(last.recipeIds.length===6&&!last.recipeIds.includes(before[0])&&before.slice(1).every(id=>last.recipeIds.includes(id)),'a skipped dinner is left out of the cooldown history');
+   ok(st().skipped.length===0,'the new week starts with nothing skipped');
+   const weeks=(hist,n)=>Array.from({length:n},()=>A.__wtGenerate(recs,hist,highs,{}));
+   ok(weeks([{id:1,recipeIds:before}],400).every(wk=>wk.every(d=>d.recipeId!==before[0])),'without the skip that dinner would sit out the cooldown');
+   ok(weeks([{id:1,recipeIds:before.slice(1)}],600).some(wk=>wk.some(d=>d.recipeId===before[0])),'a skipped dinner can come straight back');
+   ok(weeks([{id:1,recipeIds:before.slice(1)}],300).every(wk=>wk.every(d=>!before.slice(1).includes(d.recipeId))),'the dinners that were eaten still sit out the cooldown'); }
  // 11. shopping list + removal of a custom recipe
  a.querySelector('[data-action=export]').click();
  ok(a.getElementById('listText').value.includes('TO BUY'),'shopping list builds');

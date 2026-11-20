@@ -28,7 +28,7 @@ var BANDS=[
 var S={
   code:'',docs:{},known:{},
   recipes:[],map:{},
-  planner:{plan:null,weekStart:'',history:[]},
+  planner:{plan:null,weekStart:'',history:[],skipped:[]},
   have:{},ratings:{},
   override:null,
   settings:{name:'Hamilton, ON',lat:43.2557,lon:-79.8711},
@@ -107,7 +107,8 @@ function normPlanner(d){
     plan=d.plan.map(function(x,i){return {day:DAYS[i],recipeId:String((x&&x.recipeId)||'')};});
   }
   var hist=Array.isArray(d.history)?d.history.filter(function(w){return w&&Array.isArray(w.recipeIds);}).map(function(w){return {id:w.id||0,recipeIds:w.recipeIds.map(String)};}).slice(-HISTORY_DEPTH):[];
-  return {plan:plan,weekStart:/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||''))?d.weekStart:'',history:hist};
+  var skipped=Array.isArray(d.skipped)?d.skipped.map(String).filter(function(id,i,a){return a.indexOf(id)===i&&!!plan&&plan.some(function(x){return x.recipeId===id;});}):[];
+  return {plan:plan,weekStart:/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||''))?d.weekStart:'',history:hist,skipped:skipped};
 }
 function normOverride(d){
   if(!d||!Array.isArray(d.highs)||d.highs.length!==7||!d.highs.every(isNum)||!/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||'')))return null;
@@ -355,7 +356,8 @@ function placeBtn(r){
   var inW=inWeekSet()[r.id],no=!S.planner.plan;
   return '<button type="button" class="btn-ghost" data-action="add-to-week" data-id="'+esc(r.id)+'"'+((inW||no)?' disabled title="'+(inW?'Already in this week':'Build a week first')+'"':'')+'>⟳ Swap into week</button>';
 }
-function rateRow(r){return '<div class="raterow"><span>Tried it?</span>'+rateBtns(r)+'</div>';}
+function rateRow(r,extra){return '<div class="raterow"><span>Tried it?</span>'+rateBtns(r)+(extra||'')+'</div>';}
+function skipBtn(i,on){return '<button type="button" class="skipbtn'+(on?' on':'')+'" data-action="skip" data-i="'+i+'" aria-pressed="'+(!!on)+'" title="We didn’t have this dinner this week">⏭ Skipped</button>';}
 function syncRateButtons(){
   [].forEach.call(document.querySelectorAll('[data-action=rate]'),function(b){
     var on=(S.ratings[b.dataset.id]||0)===Number(b.dataset.v);
@@ -427,9 +429,9 @@ function dayCard(d,i){
       '<div class="dc-actions"><button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
       '<button class="btn-ghost" data-action="move" data-i="'+i+'">⇄ Switch day</button></div></div></article>';
   }
-  var open=S.expanded===i;
-  return '<article class="daycard"><div class="tab">'+tabLabel(i)+'</div>'+photo(r,96)+
-    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+sidesHtml(r)+rateRow(r)+
+  var open=S.expanded===i,sk=isSkipped(d.recipeId);
+  return '<article class="daycard'+(sk?' skipped':'')+'"><div class="tab">'+tabLabel(i)+(sk?' · SKIPPED':'')+'</div>'+photo(r,96)+
+    '<div class="dc-body"><div class="row"><h3 class="rname">'+esc(r.name)+'</h3>'+stamp(r)+'</div>'+metaRow(r)+sidesHtml(r)+(sk?'<p class="skipnote">Skipped this week: it won’t count toward the '+HISTORY_DEPTH+'-week cooldown and it’s left off the shopping list.</p>':'')+rateRow(r,skipBtn(i,sk))+
     (open?detailHtml(r):'')+
     '<div class="dc-actions"><button class="btn-ghost" data-action="view-day" data-i="'+i+'">'+(open?'▴ Hide recipe':'▾ View recipe')+'</button>'+
     '<button class="btn-ghost" data-action="swap" data-i="'+i+'">⟳ Swap</button>'+
@@ -470,7 +472,7 @@ function renderBox(){
   $('boxList').innerHTML='<div class="bgrid">'+list.map(function(r){
     var inW=iw[r.id],rt=S.ratings[r.id]||0;
     return '<div class="bcard'+(rt===-1?' disliked':'')+'">'+photo(r,72)+'<div class="bbody"><div class="row"><p class="bname">'+esc(r.name)+'</p>'+stamp(r,true)+'</div>'+
-      metaRow(r,(inW?'<span class="pill">in this week</span>':'')+(rt===1?'<span class="pill">👍 liked</span>':rt===-1?'<span class="pill">👎 out of rotation</span>':''))+sidesHtml(r)+
+      metaRow(r,(inW?'<span class="pill">in this week'+(isSkipped(r.id)?' · skipped':'')+'</span>':'')+(rt===1?'<span class="pill">👍 liked</span>':rt===-1?'<span class="pill">👎 out of rotation</span>':''))+sidesHtml(r)+
       '<div class="bactions"><button class="btn-ghost" data-action="view-recipe" data-id="'+esc(r.id)+'">View</button>'+placeBtn(r)+rateBtns(r)+
       (r.custom?'<button class="btn-ghost danger" data-action="remove" data-id="'+esc(r.id)+'"'+(inW?' disabled title="In this week’s plan: swap it out first"':'')+'>Remove</button>':'')+
       '</div></div></div>';
@@ -580,7 +582,7 @@ function doMove(i,j){
   var plan=p.plan.map(function(d,k){return k===i?{day:d.day,recipeId:p.plan[j].recipeId}:k===j?{day:d.day,recipeId:p.plan[i].recipeId}:d;});
   if(S.expanded===i)S.expanded=j;else if(S.expanded===j)S.expanded=i;
   closeModal();
-  writeDocs([{path:'planner/state',data:{plan:plan,weekStart:p.weekStart||targetWeekStart(),history:p.history,updatedAt:Date.now()}}]);
+  writeDocs([planDoc(p,plan,p.history,p.skipped)]);
   toast(DAYS[i]+' and '+DAYS[j]+' switched.');
 }
 
@@ -767,7 +769,7 @@ function saveHave(){
   try{localStorage.setItem('wt-have-v1',JSON.stringify({week:planWeek(),keys:Object.keys(S.have)}));}catch(e){}
 }
 function allLines(){
-  var all=[];(S.planner.plan||[]).forEach(function(d){var r=S.map[d.recipeId];if(r)all=all.concat(r.ingredients);});
+  var all=[];(S.planner.plan||[]).forEach(function(d){var r=S.map[d.recipeId];if(r&&!isSkipped(d.recipeId))all=all.concat(r.ingredients);});
   return all;
 }
 // A recipe line is dropped from the by-night section only when every item on it is at home.
@@ -784,7 +786,7 @@ function buildList(have){
   else out.push('Nothing to buy: you have it all at home.');
   var nights=[];
   plan.forEach(function(d){
-    var r=S.map[d.recipeId];if(!r)return;
+    var r=S.map[d.recipeId];if(!r||isSkipped(d.recipeId))return;
     var lines=r.ingredients.filter(function(ing){return !lineAtHome(ing,have);});
     if(lines.length)nights.push(['',d.day.toUpperCase()+': '+r.name].concat(lines.map(function(ing){return '  - '+ing;})));
   });
@@ -795,7 +797,7 @@ function openExport(){
   if(!S.planner.plan)return;
   S.have=loadHave();
   shopItems=mergeItems(allLines());
-  openModal(mhead('Shopping list','Tick what you already have at home. Only the rest is exported.')+
+  openModal(mhead('Shopping list','Tick what you already have at home. Only the rest is exported.'+(S.planner.skipped.length?' Skipped dinners are left out.':''))+
     '<div class="shopbar"><span id="shopCount" class="mono"></span><button class="btn-ghost" data-action="have-clear">Untick all</button></div>'+
     '<div id="shopRows" class="shoprows">'+shopItems.map(function(x,i){
       return '<label class="shoprow'+(S.have[x.key]?' have':'')+'"><input type="checkbox" data-have="'+i+'"'+(S.have[x.key]?' checked':'')+'><span>'+esc(x.text)+'</span></label>';
@@ -1094,18 +1096,32 @@ function removeRecipe(id){
 }
 
 /* ---------- plan writes ---------- */
+function planDoc(p,plan,hist,skipped){
+  var ids={};plan.forEach(function(d){ids[d.recipeId]=1;});
+  return {path:'planner/state',data:{plan:plan,weekStart:p.weekStart||targetWeekStart(),history:hist,skipped:(skipped||[]).filter(function(id){return ids[id];}),updatedAt:Date.now()}};
+}
+function isSkipped(id){return S.planner.skipped.indexOf(id)>=0;}
+/* "Skipped": we didn't have this dinner this week. It is left out of the history that drives the four-week cooldown,
+   so it can come straight back, and out of the shopping list. */
+function toggleSkip(i){
+  var p=S.planner;if(!p.plan||!p.plan[i])return;
+  var id=p.plan[i].recipeId,r=S.map[id],on=isSkipped(id);
+  var next=on?p.skipped.filter(function(x){return x!==id;}):p.skipped.concat([id]);
+  writeDocs([planDoc(p,p.plan,p.history,next)]);
+  toast(on?'Skip cleared for “'+(r?r.name:'that dinner')+'”.':'Skipped: “'+(r?r.name:'that dinner')+'” won’t count toward the '+HISTORY_DEPTH+'-week cooldown.');
+}
 async function doGenerate(){
   if(!S.liveAt||Date.now()-S.liveAt>30*60000){try{await loadForecast();}catch(e){}}
   var ws=targetWeekStart(),hf=highsFor(ws),p=S.planner,hist=p.history;
-  if(p.plan){hist=hist.concat([{id:Date.now(),recipeIds:p.plan.map(function(d){return d.recipeId;})}]).slice(-HISTORY_DEPTH);}
+  if(p.plan){hist=hist.concat([{id:Date.now(),recipeIds:p.plan.filter(function(d){return !isSkipped(d.recipeId);}).map(function(d){return d.recipeId;})}]).slice(-HISTORY_DEPTH);}
   S.expanded=null;
-  writeDocs([{path:'planner/state',data:{plan:generateWeek(S.recipes,hist,hf.highs,S.ratings),weekStart:ws,history:hist,updatedAt:Date.now()}}]);
+  writeDocs([planDoc({weekStart:ws},generateWeek(S.recipes,hist,hf.highs,S.ratings),hist,[])]);
 }
 function doSwap(i,id){
   var p=S.planner;if(!p.plan)return;
   var plan=p.plan.map(function(d,k){return k===i?{day:d.day,recipeId:id}:d;});
   closeModal();
-  writeDocs([{path:'planner/state',data:{plan:plan,weekStart:p.weekStart||targetWeekStart(),history:p.history,updatedAt:Date.now()}}]);
+  writeDocs([planDoc(p,plan,p.history,p.skipped)]);
 }
 
 /* ---------- events ---------- */
@@ -1148,6 +1164,7 @@ document.addEventListener('click',function(e){
   else if(a==='save-list')saveList();
   else if(a==='have-clear')clearHave();
   else if(a==='rate')setRating(t.dataset.id,Number(t.dataset.v));
+  else if(a==='skip')toggleSkip(Number(t.dataset.i));
   else if(a==='fix-route')pickRoute(t.dataset.route);
   else if(a==='apply-swaps')applySwaps();
   else if(a==='undo-swaps')undoSwaps();

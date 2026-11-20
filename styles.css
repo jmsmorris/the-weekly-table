@@ -192,3 +192,12 @@ textarea.mono{font-family:'Space Mono',ui-monospace,Menlo,monospace;font-size:12
 .rbtn.down.on{background:var(--meat);border-color:var(--meat)}
 .bactions .rbtn{padding:6px 9px}
 .bcard.disliked{opacity:.6}
+
+/* skipped dinners */
+.raterow{flex-wrap:wrap}
+.skipbtn{margin-left:auto;font-size:12px;font-weight:600;padding:5px 10px;border-radius:999px;border:1.5px solid var(--line);background:transparent;color:var(--text)}
+.skipbtn:hover{border-color:var(--gold)}
+.skipbtn.on{background:var(--head);color:var(--head-text);border-color:var(--head)}
+.skipnote{font-size:12px;line-height:1.4;color:var(--soft);margin-top:8px}
+.daycard.skipped .photo{filter:grayscale(.75);opacity:.65}
+.daycard.skipped .rname{color:var(--soft)}
