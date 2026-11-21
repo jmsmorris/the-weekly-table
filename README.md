@@ -5,7 +5,7 @@ A shared kosher dinner planner for a family of three.
 - 112 recipes: meat, dairy and pareve; quick, slow-cooker, Instant Pot and one-pot.
 - Menus follow the week's **live weather forecast** (°C): hearty, warming dishes when it's cold, lighter ones when it's warm.
 - **Friday is always a Shabbat-style meat-and-veggies dinner.**
-- Meat is capped at 3 nights (Monday, Wednesday, Friday). Nothing repeats inside 4 weeks.
+- Weeks run Saturday to Friday. Meat is capped at 3 nights (Monday, Wednesday, Friday). Nothing repeats inside 4 weeks.
 - Swap any night, search and filter the recipe box, build a shopping list.
 - **Import a recipe from a web link**, with a kosher check (flags meat + dairy mixes and non-kosher ingredients).
 - Shared between devices through a household code. Works on iPhone as a Home Screen app.

@@ -3,11 +3,11 @@
 'use strict';
 
 var CFG=window.WT_CONFIG||{};
-var DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-var SHORT=['MON','TUE','WED','THU','FRI','SAT','SUN'];
+var DAYS=['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
+var SHORT=['SAT','SUN','MON','TUE','WED','THU','FRI'];
 var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-var MEAT_SLOTS=[0,2];
-var FRIDAY=4;
+var MEAT_SLOTS=[2,4]; /* Monday and Wednesday (Friday is placed separately) */
+var FRIDAY=6;
 var HISTORY_DEPTH=4;
 var CAT={meat:{label:'Meat',short:'M'},dairy:{label:'Dairy',short:'D'},pareve:{label:'Pareve',short:'P'}};
 var FALLBACK_EMOJI={meat:'🍖',dairy:'🧀',pareve:'🥗'};
@@ -51,10 +51,10 @@ function configured(){return !!(CFG.supabaseUrl&&CFG.supabaseAnonKey&&String(CFG
 function isoDate(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
 function addDays(iso,n){var d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+n);return isoDate(d);}
 function niceDate(iso){var d=new Date(iso+'T12:00:00');return MONTHS[d.getMonth()]+' '+d.getDate();}
-function targetWeekStart(){
-  var d=new Date();d.setHours(12,0,0,0);
-  var dow=(d.getDay()+6)%7; /* Monday = 0 */
-  if(dow>=3)d.setDate(d.getDate()+(7-dow)); /* Thursday to Sunday: plan the coming week */
+function targetWeekStart(now){
+  var d=now?new Date(now.getTime()):new Date();d.setHours(12,0,0,0);
+  var dow=(d.getDay()+1)%7; /* Saturday = 0 */
+  if(dow>=3)d.setDate(d.getDate()+(7-dow)); /* Tuesday to Friday: plan the coming week (it starts Saturday) */
   else d.setDate(d.getDate()-dow);
   return isoDate(d);
 }
@@ -107,8 +107,14 @@ function normPlanner(d){
     plan=d.plan.map(function(x,i){return {day:DAYS[i],recipeId:String((x&&x.recipeId)||'')};});
   }
   var hist=Array.isArray(d.history)?d.history.filter(function(w){return w&&Array.isArray(w.recipeIds);}).map(function(w){return {id:w.id||0,recipeIds:w.recipeIds.map(String)};}).slice(-HISTORY_DEPTH):[];
+  var ws=/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||''))?d.weekStart:'';
+  if(plan&&ws&&new Date(ws+'T12:00:00').getDay()===1){
+    /* saved when weeks started on Monday: keep each weekday's dinner, reorder to Saturday first (Mon to Fri keep their dates) */
+    plan=[5,6,0,1,2,3,4].map(function(k,i){return {day:DAYS[i],recipeId:plan[k].recipeId};});
+    ws=addDays(ws,-2);
+  }
   var skipped=Array.isArray(d.skipped)?d.skipped.map(String).filter(function(id,i,a){return a.indexOf(id)===i&&!!plan&&plan.some(function(x){return x.recipeId===id;});}):[];
-  return {plan:plan,weekStart:/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||''))?d.weekStart:'',history:hist,skipped:skipped};
+  return {plan:plan,weekStart:ws,history:hist,skipped:skipped};
 }
 function normOverride(d){
   if(!d||!Array.isArray(d.highs)||d.highs.length!==7||!d.highs.every(isNum)||!/^\d{4}-\d\d-\d\d$/.test(String(d.weekStart||'')))return null;
@@ -373,7 +379,7 @@ function setRating(id,v){
 }
 function sidesOf(r){return r.sides&&r.sides.length?r.sides:suggestSides(r);}
 function sidesHtml(r){var s=sidesOf(r);return s.length?'<p class="sides"><b>Round it out:</b> '+s.map(esc).join(' + ')+'</p>':'';}
-window.__wtSuggestSides=suggestSides;window.__wtGenerate=generateWeek;
+window.__wtSuggestSides=suggestSides;window.__wtGenerate=generateWeek;window.__wtTargetWeekStart=targetWeekStart;
 function metaRow(r,extra){
   return '<div class="meta"><span>⏱ '+fmtTime(r.minutes)+'</span>'+(r.servings?'<span>serves ~'+r.servings+'</span>':'')+(r.kidFriendly?'<span>toddler-ready</span>':'')+(r.style?'<span class="pill">'+STYLES[r.style]+'</span>':'')+(extra||'')+'</div>';
 }

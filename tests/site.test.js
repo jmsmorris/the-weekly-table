@@ -75,12 +75,15 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
  let st=doc(code,'planner/state');
  ok(st&&st.plan&&st.plan.length===7,'plan saved');
  const R=id=>doc(code,'recipes/'+id);
+ const SAT=0,MON=2,TUE=3,WED=4,FRI=6; // the week runs Saturday to Friday
  const meat=st.plan.filter(x=>R(x.recipeId).category==='meat').length;
  ok(meat===3,'3 meat nights');
- ok(R(st.plan[4].recipeId).category==='meat'&&R(st.plan[4].recipeId).shabbat,'Friday is a Shabbat-style meat dish');
- ok(/^\d{4}-\d\d-\d\d$/.test(st.weekStart),'plan records weekStart '+st.weekStart);
+ ok(R(st.plan[FRI].recipeId).category==='meat'&&R(st.plan[FRI].recipeId).shabbat,'Friday is a Shabbat-style meat dish');
+ ok(st.plan.map((x,i)=>R(x.recipeId).category==='meat'?i:-1).filter(i=>i>=0).join()===[MON,WED,FRI].join(),'the three meat nights are Monday, Wednesday and Friday');
+ ok(/^\d{4}-\d\d-\d\d$/.test(st.weekStart)&&new Date(st.weekStart+'T12:00:00').getDay()===6,'plan records weekStart '+st.weekStart+' and it is a Saturday');
  const tabs=[...a.querySelectorAll('.tab')].map(t=>t.textContent);
- ok(tabs.length===7&&/FRI \d+ · SHABBAT · 10°C/.test(tabs[4]),'tabs show date and °C: '+tabs[4]);
+ ok(tabs.map(x=>x.slice(0,3)).join()==='SAT,SUN,MON,TUE,WED,THU,FRI','the week runs Saturday to Friday: '+tabs.map(x=>x.slice(0,3)).join(' '));
+ ok(tabs.length===7&&/FRI \d+ · SHABBAT · 10°C/.test(tabs[FRI])&&tabs.filter(x=>/SHABBAT/.test(x)).length===1,'tabs show date and °C, and only Friday is Shabbat: '+tabs[FRI]);
  ok(/cool weather/.test(a.getElementById('hint').textContent),'hint says cool weather (10°C forecast): '+a.getElementById('hint').textContent.slice(0,90));
  // 3. device B joins via invite link
  const B=device('#join='+code);await sleep(400);const b=B.document;
@@ -98,34 +101,34 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    const names=d=>[...d.querySelectorAll('.daycard .rname')].map(x=>x.textContent);
    const before=plan0(),nm0=names(a);
    ok(a.querySelectorAll('[data-action=move]').length===7,'every day card has a switch-day button');
-   a.querySelectorAll('[data-action=move]')[0].click();
+   a.querySelectorAll('[data-action=move]')[MON].click();
    const opts=[...a.querySelectorAll('[data-action=move-pick]')];
-   ok(opts.length===6&&!opts.some(o=>o.dataset.j==='0'),'switch-day lists the six other days');
-   ok(opts.find(o=>o.dataset.j==='1').textContent.includes(nm0[1]),'each option names the dinner on that day');
-   const fri=opts.find(o=>o.dataset.j==='4'),monShab=R(before[0]).shabbat;
+   ok(opts.length===6&&!opts.some(o=>+o.dataset.j===MON),'switch-day lists the six other days');
+   ok(opts.find(o=>+o.dataset.j===TUE).textContent.includes(nm0[TUE]),'each option names the dinner on that day');
+   const fri=opts.find(o=>+o.dataset.j===FRI),monShab=R(before[MON]).shabbat;
    ok(fri.disabled===!monShab,'Friday is only offered when the dinner moving there is Shabbat-style ('+(monShab?'it is':'it is not')+')');
-   opts.find(o=>o.dataset.j==='1').click();await sleep(200);
+   opts.find(o=>+o.dataset.j===TUE).click();await sleep(200);
    const after=plan0();
-   ok(after[0]===before[1]&&after[1]===before[0],'Monday and Tuesday trade places');
-   ok(after.slice(2).join()===before.slice(2).join()&&[...after].sort().join()===[...before].sort().join(),'nothing else changes and no dinner is dropped');
-   ok(names(a)[0]===nm0[1]&&names(a)[1]===nm0[0]&&!a.getElementById('modal').firstChild,'the cards show the new order and the dialog closes');
-   ok(doc(code,'planner/state').plan[0].day==='Monday'&&doc(code,'planner/state').plan[1].day==='Tuesday','day labels stay in place');
+   ok(after[MON]===before[TUE]&&after[TUE]===before[MON],'Monday and Tuesday trade places');
+   ok(after.filter((x,i)=>i!==MON&&i!==TUE).join()===before.filter((x,i)=>i!==MON&&i!==TUE).join()&&[...after].sort().join()===[...before].sort().join(),'nothing else changes and no dinner is dropped');
+   ok(names(a)[MON]===nm0[TUE]&&names(a)[TUE]===nm0[MON]&&!a.getElementById('modal').firstChild,'the cards show the new order and the dialog closes');
+   ok(doc(code,'planner/state').plan[MON].day==='Monday'&&doc(code,'planner/state').plan[TUE].day==='Tuesday','day labels stay in place');
    await B.__wtPoll();await sleep(100);
-   ok(names(b)[0]===nm0[1]&&names(b)[1]===nm0[0],'the other device sees the switch');
+   ok(names(b)[MON]===nm0[TUE]&&names(b)[TUE]===nm0[MON],'the other device sees the switch');
    // Friday: a Shabbat dinner may move to another day, and a non-Shabbat dinner may not take Friday
    const fp=plan0();
-   a.querySelectorAll('[data-action=move]')[4].click();
+   a.querySelectorAll('[data-action=move]')[FRI].click();
    const fopts=[...a.querySelectorAll('[data-action=move-pick]')];
    ok(fopts.every(o=>o.disabled===!R(fp[+o.dataset.j]).shabbat),'moving Friday’s dinner only offers days whose dinner is Shabbat-style');
    const bad=fopts.find(o=>o.disabled);if(bad){bad.click();await sleep(100);ok(plan0().join()===fp.join(),'a blocked switch changes nothing');}
    a.querySelector('[data-action=close]').click();
    const friOk=fopts.find(o=>!o.disabled);
-   if(friOk){a.querySelectorAll('[data-action=move]')[4].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j===friOk.dataset.j).click();await sleep(200);
-     ok(R(plan0()[4]).shabbat&&R(plan0()[4]).category==='meat','Friday is still a Shabbat-style meat dish after a switch');}
+   if(friOk){a.querySelectorAll('[data-action=move]')[FRI].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j===friOk.dataset.j).click();await sleep(200);
+     ok(R(plan0()[FRI]).shabbat&&R(plan0()[FRI]).category==='meat','Friday is still a Shabbat-style meat dish after a switch');}
    // meat count unchanged by any switch
    ok(plan0().filter(id=>R(id).category==='meat').length===before.filter(id=>R(id).category==='meat').length,'the number of meat nights is unchanged');
    // switch back so later steps see the original order
-   a.querySelectorAll('[data-action=move]')[0].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>o.dataset.j==='1').click();await sleep(200); }
+   a.querySelectorAll('[data-action=move]')[MON].click();[...a.querySelectorAll('[data-action=move-pick]')].find(o=>+o.dataset.j===TUE).click();await sleep(200); }
  // 4c. servings and sides on the week's cards and in the recipe view
  { const cards=[...a.querySelectorAll('.daycard')];
    ok(cards.length===7&&cards.every(c=>/serves ~\d+/.test(c.textContent)&&/Round it out:/.test(c.querySelector('.sides').textContent)),'every day card shows servings and sides');
@@ -205,7 +208,7 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    const hist=[{id:1,recipeIds:W2.slice(0,4).map(r=>r.id)}];
    ok(weeks(300,hist,liked).every(w=>w.every(d=>!liked[d.recipeId])),'a liked recipe still waits out the four-week rule');
    const noShab={};recs.filter(r=>r.shabbat).forEach(r=>{noShab[r.id]=-1;});
-   ok(weeks(150,[],noShab).every(w=>{const f=recs.find(r=>r.id===w[4].recipeId);return f.shabbat&&f.category==='meat';}),'Friday is still a Shabbat dish even if every one is disliked');
+   ok(weeks(150,[],noShab).every(w=>{const f=recs.find(r=>r.id===w[FRI].recipeId);return f.shabbat&&f.category==='meat';}),'Friday is still a Shabbat dish even if every one is disliked');
    const noMeat={};recs.filter(r=>r.category==='meat').forEach(r=>{noMeat[r.id]=-1;});
    ok(weeks(150,[],noMeat).every(w=>w.filter(d=>recs.find(r=>r.id===d.recipeId).category==='meat').length===3),'the three meat nights are still filled if every meat dish is disliked');
    ok(weeks(100,[],{}).every(w=>new Set(w.map(d=>d.recipeId)).size===7),'a week never repeats a dinner'); }
@@ -220,7 +223,7 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    btn(a,dairy).click();
    const rows=[...a.querySelectorAll('[data-action=place-pick]')];
    ok(rows.length===7&&rows.every((o,j)=>o.textContent.includes(R(before[j]).name)),'the picker lists all seven days with their dinners');
-   ok(rows.map(o=>o.disabled).join()===[false,false,false,false,true,false,false].join()&&/Shabbat-style only/.test(rows[4].textContent),'Friday is closed to a recipe that isn’t Shabbat-style');
+   ok(rows.map(o=>o.disabled).join()===Array.from({length:7},(_,j)=>j===FRI).join()&&/Shabbat-style only/.test(rows[FRI].textContent),'Friday is closed to a recipe that isn’t Shabbat-style');
    rows[1].click();await sleep(200);
    const after=planIds();
    ok(after[1]===dairy.id&&after.filter((id,j)=>j!==1).join()===before.filter((id,j)=>j!==1).join(),'the recipe replaces the dinner on the day you pick and nothing else changes');
@@ -233,14 +236,14 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    const meat=seedR.find(r=>!plan2.includes(r.id)&&r.category==='meat'&&!r.shabbat);
    btn(a,meat).click();
    const mrows=[...a.querySelectorAll('[data-action=place-pick]')];
-   ok(mrows.every((o,j)=>o.disabled===(!meatDay(j)||j===4)),'a meat dish can only replace a meat night (3 meat nights), never Friday if it isn’t Shabbat-style');
+   ok(mrows.every((o,j)=>o.disabled===(!meatDay(j)||j===FRI)),'a meat dish can only replace a meat night (3 meat nights), never Friday if it isn’t Shabbat-style');
    ok(mrows.some(o=>/meat limit/.test(o.textContent)),'the picker says why a day is closed');
    a.querySelector('[data-action=close]').click();
    const shab=seedR.find(r=>!plan2.includes(r.id)&&r.shabbat);
    btn(a,shab).click();
-   ok(![...a.querySelectorAll('[data-action=place-pick]')][4].disabled,'a Shabbat-style dish can take Friday');
-   [...a.querySelectorAll('[data-action=place-pick]')][4].click();await sleep(200);
-   ok(planIds()[4]===shab.id&&R(planIds()[4]).shabbat&&R(planIds()[4]).category==='meat'&&planIds().filter(id=>R(id).category==='meat').length===3,'swapping a Shabbat dish into Friday keeps three meat nights');
+   ok(![...a.querySelectorAll('[data-action=place-pick]')][FRI].disabled,'a Shabbat-style dish can take Friday');
+   [...a.querySelectorAll('[data-action=place-pick]')][FRI].click();await sleep(200);
+   ok(planIds()[FRI]===shab.id&&R(planIds()[FRI]).shabbat&&R(planIds()[FRI]).category==='meat'&&planIds().filter(id=>R(id).category==='meat').length===3,'swapping a Shabbat dish into Friday keeps three meat nights');
    // from the recipe view too
    const other=seedR.find(r=>!planIds().includes(r.id)&&r.category==='pareve'&&!r.shabbat);
    boxCard(a,other.name).querySelector('[data-action=view-recipe]').click();
@@ -249,6 +252,27 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    vb.click();
    ok(a.querySelectorAll('[data-action=place-pick]').length===7,'it opens the same day picker');
    a.querySelector('[data-action=close]').click(); }
+ // 4h. Saturday-first weeks
+ { const T=A.__wtTargetWeekStart;
+   const cases=[[[2026,10,21],'2026-11-21'],[[2026,10,22],'2026-11-21'],[[2026,10,23],'2026-11-21'],[[2026,10,24],'2026-11-28'],[[2026,10,25],'2026-11-28'],[[2026,10,26],'2026-11-28'],[[2026,10,27],'2026-11-28'],[[2026,10,28],'2026-11-28'],[[2026,10,29],'2026-11-28'],[[2026,10,30],'2026-11-28'],[[2026,11,1],'2026-12-05']];
+   const bad=cases.filter(([d,want])=>T(new Date(d[0],d[1],d[2],15))!==want);
+   ok(bad.length===0,'Saturday to Monday plan the current week, Tuesday to Friday plan the coming one'+(bad.length?' (wrong for '+bad.map(x=>x[0].join('-')).join(', ')+')':''));
+   ok(Array.from({length:60},(_,i)=>new Date(2026,9,1+i,9)).every(d=>new Date(T(d)+'T12:00:00').getDay()===6),'the week being planned always starts on a Saturday');
+   // a week saved when weeks began on Monday keeps every weekday's dinner and its date
+   const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+   const plus=(s,n)=>{const d=new Date(s+'T12:00:00');d.setDate(d.getDate()+n);return iso(d);};
+   const slot=server.docs[code+'|planner/state'],keep=JSON.parse(JSON.stringify(slot)),cur=keep.data.plan.map(d=>d.recipeId),ws=keep.data.weekStart;
+   const DN=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+   slot.data={...keep.data,weekStart:plus(ws,2),plan:[2,3,4,5,6,0,1].map((k,i)=>({day:DN[i],recipeId:cur[k]}))};slot.t='tlegacy';
+   const C=device('#join='+code);await sleep(900);
+   const tabsC=[...C.document.querySelectorAll('.tab')].map(x=>x.textContent),namesC=[...C.document.querySelectorAll('.daycard .rname')].map(x=>x.textContent);
+   ok(tabsC.map(x=>x.slice(0,3)).join()==='SAT,SUN,MON,TUE,WED,THU,FRI','an older Monday-first week is shown Saturday first');
+   ok(namesC.join('|')===cur.map(id=>R(id).name).join('|'),'every weekday keeps its dinner');
+   ok(/SHABBAT/.test(tabsC[FRI])&&tabsC.map(x=>x.split(' ·')[0]).join()===[...a.querySelectorAll('.tab')].map(x=>x.textContent.split(' ·')[0]).join(),'Friday is still the Shabbat dinner and every day keeps its date');
+   C.document.querySelectorAll('[data-action=skip]')[SAT].click();await sleep(250); // any change to the week saves it in the new order
+   const saved=doc(code,'planner/state');
+   ok(saved.weekStart===ws&&saved.plan.map(d=>d.recipeId).join()===cur.join()&&saved.plan[SAT].day==='Saturday'&&saved.plan[FRI].day==='Friday','the next save writes the week back Saturday-first');
+   slot.data=keep.data;slot.t='trestored';await A.__wtPoll();await sleep(100); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
  importReply={name:'Slow Cooker Chicken & Rice',minutes:375,servings:6,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};
@@ -360,9 +384,9 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
      const cur=doc(code,'planner/state');server.docs[code+'|planner/state'].data={...cur,history:[]};await A.__wtPoll();
      A.live&&0;a.querySelector('[data-action=generate]').click();await sleep(30);
      const s=doc(code,'planner/state');
-     s.plan.forEach((x,k)=>{if(k===4)return;tot++;if(R(x.recipeId).warmth===3)h++;});
+     s.plan.forEach((x,k)=>{if(k===FRI)return;tot++;if(R(x.recipeId).warmth===3)h++;});
      const m=s.plan.filter(x=>R(x.recipeId).category==='meat').length;
-     if(m!==3||!R(s.plan[4].recipeId).shabbat)bad++;
+     if(m!==3||!R(s.plan[FRI].recipeId).shabbat||[MON,WED].some(k=>R(s.plan[k].recipeId).category!=='meat'))bad++;
    }
    return {share:Math.round(h/tot*100),bad};
  }
