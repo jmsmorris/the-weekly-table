@@ -273,6 +273,66 @@ const doc=(code,p)=>server.docs[code+'|'+p]&&server.docs[code+'|'+p].data;
    const saved=doc(code,'planner/state');
    ok(saved.weekStart===ws&&saved.plan.map(d=>d.recipeId).join()===cur.join()&&saved.plan[SAT].day==='Saturday'&&saved.plan[FRI].day==='Friday','the next save writes the week back Saturday-first');
    slot.data=keep.data;slot.t='trestored';await A.__wtPoll();await sleep(100); }
+ // 4i. adjust the amount of an ingredient
+ { const S1=A.__wtStepLine;
+   const eq=(line,base,dir,want)=>S1(line,base,dir)===want;
+   ok(eq('24 oz marinara','24 oz marinara',1,'30 oz marinara')&&eq('30 oz marinara','24 oz marinara',1,'36 oz marinara')&&eq('36 oz marinara','24 oz marinara',-1,'30 oz marinara'),'a measure moves by about a quarter of the original amount');
+   ok(eq('2 cups cherry tomatoes, halved','2 cups cherry tomatoes, halved',1,'2 1/2 cups cherry tomatoes, halved')&&eq('1 tbsp butter','1 tbsp butter',1,'1 1/4 tbsp butter'),'small amounts move by fractions');
+   ok(eq('4 chicken breasts','4 chicken breasts',1,'5 chicken breasts')&&eq('8 eggs','8 eggs',-1,'7 eggs'),'whole things move by one');
+   ok(eq('1 onion, diced','1 onion, diced',1,'2 onions, diced')&&eq('2 eggs, beaten','2 eggs, beaten',-1,'1 egg, beaten'),'the noun agrees with the new amount');
+   ok(eq('1 can black beans','1 can black beans',1,'2 cans black beans')&&eq('2 cans black beans','1 can black beans',-1,'1 can black beans')&&eq('1 can (28 oz) crushed tomatoes','1 can (28 oz) crushed tomatoes',1,'2 cans (28 oz) crushed tomatoes'),'cans and jars agree with the new amount');
+   ok(eq('1/4 cup olive oil','1/4 cup olive oil',-1,'1/4 cup olive oil'),'an amount never steps down to nothing');
+   ok(eq('2 eggplants, sliced 1/2 inch','2 eggplants, sliced 1/2 inch',1,'3 eggplants, sliced 1/2 inch')&&eq('2 tbsp olive oil, salt, pepper','2 tbsp olive oil, salt, pepper',1,'2 1/2 tbsp olive oil, salt, pepper'),'a line with one amount and some notes still steps');
+   ok(S1('Salt and pepper','Salt and pepper',1)===null&&S1('1 onion, 2 carrots, diced','1 onion, 2 carrots, diced',1)===null,'lines with no amount, or several items, aren’t stepped'); }
+ { const id='seed-eggplant-parm-bake',nm=R(id).name,twDoc=()=>doc(code,'tweaks/'+id);
+   const boxCard=(d,name)=>[...d.querySelectorAll('.bcard')].find(c=>c.querySelector('.bname').textContent===name);
+   const rows=()=>[...a.querySelectorAll('#modal .adjrow')],row=x=>rows().find(r=>r.querySelector('input').value.includes(x));
+   const open=d=>{boxCard(d,nm).querySelector('[data-action=view-recipe]').click();};
+   const openAdj=()=>{open(a);a.querySelector('#modal [data-action=adjust]').click();};
+   open(a);
+   ok(!!a.querySelector('#modal [data-action=adjust]'),'the recipe view has an adjust-amounts button');
+   a.querySelector('#modal [data-action=adjust]').click();
+   ok(rows().length===R(id).ingredients.length&&row('marinara').querySelector('input').value==='24 oz marinara','every ingredient line is listed with its amount');
+   const inp=()=>row('marinara').querySelector('input'),plus=()=>row('marinara').querySelector('[data-d="1"]'),minus=()=>row('marinara').querySelector('[data-d="-1"]');
+   plus().click();plus().click();
+   ok(inp().value==='36 oz marinara','the + button adds more sauce');
+   minus().click();
+   ok(inp().value==='30 oz marinara'&&row('marinara').classList.contains('changed')&&/was “24 oz marinara”/.test(row('marinara').textContent),'a changed line shows what it was');
+   ok(!row('Olive oil').querySelector('[data-action=adj-step]')&&!!row('Olive oil').querySelector('input'),'a line with no amount can only be typed over');
+   ok(a.querySelector('[data-action=adj-reset]').disabled,'reset is off until something has been saved');
+   a.querySelector('[data-action=adj-save]').click();await sleep(200);
+   ok(JSON.stringify(twDoc().lines)===JSON.stringify({'24 oz marinara':'30 oz marinara'}),'the change is saved for the household, and only that line');
+   ok(JSON.stringify(R(id).ingredients).includes('24 oz marinara'),'the shipped recipe itself is not edited');
+   open(a);
+   ok(/30 oz marinara/.test(a.getElementById('modal').textContent)&&/was “24 oz marinara”/.test(a.getElementById('modal').textContent)&&/Ingredients · adjusted/.test(a.getElementById('modal').textContent),'the recipe now shows the new amount and what it was');
+   a.querySelector('[data-action=close]').click();
+   await B.__wtPoll();await sleep(100);
+   open(b);
+   ok(/30 oz marinara/.test(b.getElementById('modal').textContent),'the other device sees the new amount');
+   b.querySelector('[data-action=close]').click();
+   // the shopping list uses the adjusted amount
+   boxCard(a,nm).querySelector('[data-action=add-to-week]').click();
+   [...a.querySelectorAll('[data-action=place-pick]')].find(o=>o.dataset.j==='1').click();await sleep(200);
+   a.querySelector('[data-action=export]').click();
+   { const ls=a.getElementById('listText').value.split('\n'),at=ls.findIndex(l=>l==='SUNDAY: '+nm),mine=[];
+     for(let k=at+1;at>=0&&k<ls.length&&ls[k].startsWith('  - ');k++)mine.push(ls[k].trim());
+     ok(at>=0&&mine.includes('- 30 oz marinara')&&!mine.includes('- 24 oz marinara'),'the shopping list uses the adjusted amount'); }
+   a.querySelector('[data-action=close]').click();
+   // typing over a line works too, and a second save replaces the first
+   openAdj();
+   ok(row('marinara').querySelector('input').value==='30 oz marinara'&&!a.querySelector('[data-action=adj-reset]').disabled,'reopening shows the saved amount and reset is available');
+   const typed=row('mozzarella').querySelector('input');typed.value='3 cups shredded mozzarella';typed.dispatchEvent(new A.Event('input',{bubbles:true}));
+   ok(row('mozzarella').classList.contains('changed'),'typing marks the line as changed');
+   a.querySelector('[data-action=adj-save]').click();await sleep(200);
+   ok(Object.keys(twDoc().lines).length===2&&twDoc().lines['2 cups shredded mozzarella']==='3 cups shredded mozzarella','several lines can be adjusted');
+   openAdj();a.querySelector('[data-action=adj-reset]').click();await sleep(200);
+   ok(!twDoc()&&!/30 oz marinara/.test([...a.querySelectorAll('.daycard')].map(c=>c.textContent).join('')),'reset removes the adjustments');
+   open(a);ok(/24 oz marinara/.test(a.getElementById('modal').textContent)&&!/adjusted/.test(a.getElementById('modal').textContent),'…and the original amounts are back');
+   a.querySelector('[data-action=close]').click();
+   // a line with several items has no stepper
+   const soup='seed-beef-veggie-soup';boxCard(a,R(soup).name).querySelector('[data-action=view-recipe]').click();a.querySelector('#modal [data-action=adjust]').click();
+   ok(!row('celery').querySelector('[data-action=adj-step]'),'a line with several items is typed over, not stepped');
+   a.querySelector('[data-action=close]').click(); }
  // 5. B imports from URL
  b.querySelector('#addBtn').click();
  importReply={name:'Slow Cooker Chicken & Rice',minutes:375,servings:6,ingredients:['2 lb chicken thighs','1 cup rice','1 onion'],instructions:['Add everything to the slow cooker.','Cook on low 6 hours.'],keywords:'crockpot',source:'good.example'};

@@ -84,13 +84,15 @@ function inferWarmth(d){
   if(/wrap|salad|taco|burrito|pizza|sandwich|slider|burger|noodle|omelette|frittata|pancake|blintz|bowl/.test(n))return 1;
   return 2;
 }
-function normRecipe(id,d){
+function normRecipe(id,d,tw){
   d=d||{};
   var cat=CAT[d.category]?d.category:'pareve';
+  var base=Array.isArray(d.ingredients)?d.ingredients.map(String):[],lines=tw&&tw.lines&&typeof tw.lines==='object'?tw.lines:{};
+  var ing=base.map(function(l){var v=Object.prototype.hasOwnProperty.call(lines,l)?lines[l]:null;return typeof v==='string'&&v.trim()?v.trim().slice(0,200):l;});
   return {
     id:id,name:String(d.name||'Untitled recipe'),category:cat,minutes:Number(d.minutes)||0,
     kidFriendly:d.kidFriendly!==false,emoji:typeof d.emoji==='string'?d.emoji:'',style:STYLES[d.style]?d.style:'',
-    ingredients:Array.isArray(d.ingredients)?d.ingredients.map(String):[],
+    ingredients:ing,baseIngredients:base,
     instructions:Array.isArray(d.instructions)?d.instructions.map(String):[],
     custom:!!d.custom,
     warmth:(Number(d.warmth)>=1&&Number(d.warmth)<=3)?Math.round(Number(d.warmth)):inferWarmth(d),
@@ -126,7 +128,7 @@ function normSettings(d){
 }
 function rebuild(){
   var rs=[];
-  Object.keys(S.docs).forEach(function(p){if(p.indexOf('recipes/')===0&&S.docs[p])rs.push(normRecipe(p.slice(8),S.docs[p]));});
+  Object.keys(S.docs).forEach(function(p){if(p.indexOf('recipes/')===0&&S.docs[p])rs.push(normRecipe(p.slice(8),S.docs[p],S.docs['tweaks/'+p.slice(8)]));});
   rs.sort(function(a,b){return a.name.localeCompare(b.name);});
   S.recipes=rs;S.map={};rs.forEach(function(r){S.map[r.id]=r;});
   S.ratings={};
@@ -387,7 +389,9 @@ function detailHtml(r){
   var src='';
   if(r.sourceUrl){var host='';try{host=new URL(r.sourceUrl).hostname.replace(/^www\./,'');}catch(e){}
     if(host)src='<p style="font-size:12px;color:var(--soft)">Source: <a href="'+esc(r.sourceUrl)+'" target="_blank" rel="noopener noreferrer" style="color:inherit">'+esc(host)+'</a></p>';}
-  return '<div class="detail"><div><p class="dlabel">Ingredients</p><ul>'+r.ingredients.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul></div>'+
+  var adjusted=r.ingredients.some(function(x,i){return x!==r.baseIngredients[i];});
+  return '<div class="detail"><div><p class="dlabel">Ingredients'+(adjusted?' · adjusted':'')+'</p><ul>'+r.ingredients.map(function(x,i){return '<li>'+esc(x)+(x!==r.baseIngredients[i]?'<span class="was"> (was “'+esc(r.baseIngredients[i])+'”)</span>':'')+'</li>';}).join('')+'</ul>'+
+         '<button type="button" class="btn-ghost adjbtn" data-action="adjust" data-id="'+esc(r.id)+'">✎ Adjust amounts</button></div>'+
          '<div><p class="dlabel">Steps</p><ol>'+r.instructions.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ol></div>'+src+'</div>';
 }
 function inWeekSet(){var s={};if(S.planner.plan)S.planner.plan.forEach(function(d){s[d.recipeId]=1;});return s;}
@@ -591,6 +595,72 @@ function doMove(i,j){
   writeDocs([planDoc(p,plan,p.history,p.skipped)]);
   toast(DAYS[i]+' and '+DAYS[j]+' switched.');
 }
+
+/* adjust amounts: change the amount on any ingredient line (tweaks/<recipeId> = {lines:{original:new}}).
+   The shipped recipe is never edited, so Reset always brings it back. The shopping list uses the adjusted lines. */
+var MEASURE={cup:1,tbsp:1,tsp:1,oz:1,lb:1,g:1,kg:1,ml:1,l:1,pint:1};
+var STEP_SIZES=[0.25,1/3,0.5,2/3,0.75,1,1.5,2,3,4,5,6,8,10,12,15,20,25,30,40,50];
+function niceStep(x){var best=STEP_SIZES[0];STEP_SIZES.forEach(function(v){if(Math.abs(v-x)<Math.abs(best-x))best=v;});return best;}
+// One step up (dir 1) or down (dir -1) on a line's leading amount. Measures move by about a quarter of the original
+// amount (24 oz -> 30 oz), whole things by one. Returns null when the line has no single amount to step
+// ("2 eggplants, sliced 1/2 inch" steps; "1 cup breadcrumbs, 2 eggs" doesn’t).
+function stepLine(line,base,dir){
+  var q=parseQty(line),b=parseQty(base);
+  var amounts=function(l){return splitIngredient(l).filter(function(x){return x.n!==null;}).length;};
+  if(!q||!b||amounts(line)>1||amounts(base)>1)return null; // several amounts on one line: type it instead
+  var rest=line.slice(q.len),um=rest.match(/^\s*([a-zA-Z]+)\.?(?=\s|$)/),unit=um&&UNITS[um[1].toLowerCase()]?UNITS[um[1].toLowerCase()]:'';
+  var step=unit&&MEASURE[unit]?niceStep(b.n*0.25):1;
+  var n=Math.round((q.n+dir*step)*1000)/1000;
+  if(n<step)n=step;
+  if(unit&&UNIT_PLURAL[unit])rest=rest.replace(/^(\s*)[a-zA-Z]+/,'$1'+(n>1?UNIT_PLURAL[unit]:unit));
+  else if(!unit){
+    var m=rest.match(/^(\s+)([^,(]*?)(\s*)((?:[,(].*)?)$/);
+    if(m&&m[2]){var w=m[2].split(' '),k=w.length-1;w[k]=n>1?pluralWord(w[k]):singularWord(w[k]);rest=m[1]+w.join(' ')+m[3]+m[4];}
+  }
+  return fmtQty(n)+rest;
+}
+var adj=null;
+function openAdjust(id){
+  var r=S.map[id];if(!r)return;
+  adj={id:id,base:r.baseIngredients.slice()};
+  var rows=r.baseIngredients.map(function(b,i){
+    var cur=r.ingredients[i],can=stepLine(cur,b,1)!==null;
+    var btn=function(d,label,aria){return can?'<button type="button" class="stepbtn" data-action="adj-step" data-i="'+i+'" data-d="'+d+'" aria-label="'+aria+'">'+label+'</button>':'<span class="stepgap"></span>';};
+    return '<div class="adjrow'+(cur!==b?' changed':'')+'">'+btn(-1,'−','Less')+'<input class="adjin" data-adj="'+i+'" value="'+esc(cur)+'" maxlength="200" aria-label="Ingredient '+(i+1)+'">'+btn(1,'+','More')+
+           '<small class="adjwas">was “'+esc(b)+'”</small></div>';
+  }).join('');
+  var changed=r.ingredients.some(function(x,i){return x!==r.baseIngredients[i];});
+  openModal(mhead('Adjust amounts',esc(r.name)+'. Change an amount, then save. Everyone in the household sees it, and the shopping list uses it.')+
+    '<div class="adjlist">'+rows+'</div>'+
+    '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn-solid" data-action="adj-save">Save</button>'+
+    '<button class="btn-ghost" data-action="adj-reset"'+(changed?'':' disabled')+'>Reset to original</button></div>');
+}
+function adjInput(i){return document.querySelector('[data-adj="'+i+'"]');}
+function refreshAdj(){
+  if(!adj)return;
+  [].forEach.call(document.querySelectorAll('.adjin'),function(inp){
+    var i=Number(inp.dataset.adj);inp.parentNode.classList.toggle('changed',inp.value.trim()!==adj.base[i]);
+  });
+}
+function stepAdj(i,dir){
+  if(!adj||!adjInput(i))return;
+  var nv=stepLine(adjInput(i).value,adj.base[i],dir);
+  if(nv!==null){adjInput(i).value=nv;refreshAdj();}
+}
+function saveAdj(){
+  if(!adj)return;var r=S.map[adj.id];if(!r)return;
+  var lines={},n=0;
+  adj.base.forEach(function(b,i){var v=(adjInput(i).value||'').trim().slice(0,200);if(v&&v!==b){lines[b]=v;n++;}});
+  var id=adj.id;closeModal();adj=null;
+  if(n)writeDocs([{path:'tweaks/'+id,data:{lines:lines,at:Date.now()}}]);else if(S.docs['tweaks/'+id])removeDoc('tweaks/'+id);
+  toast(n?'Amounts saved for “'+r.name+'”.':'No changes to save.');
+}
+function resetAdj(){
+  if(!adj)return;var id=adj.id,r=S.map[id];closeModal();adj=null;
+  if(S.docs['tweaks/'+id])removeDoc('tweaks/'+id);
+  toast('Back to the original amounts for “'+(r?r.name:'that recipe')+'”.');
+}
+window.__wtStepLine=stepLine;
 
 /* forecast override */
 function openWeather(){
@@ -1099,6 +1169,7 @@ function removeRecipe(id){
   if(!window.confirm('Remove “'+r.name+'” from the recipe box for everyone?'))return;
   removeDoc('recipes/'+id);
   if(S.ratings[id])removeDoc('ratings/'+id);
+  if(S.docs['tweaks/'+id])removeDoc('tweaks/'+id);
 }
 
 /* ---------- plan writes ---------- */
@@ -1171,6 +1242,10 @@ document.addEventListener('click',function(e){
   else if(a==='have-clear')clearHave();
   else if(a==='rate')setRating(t.dataset.id,Number(t.dataset.v));
   else if(a==='skip')toggleSkip(Number(t.dataset.i));
+  else if(a==='adjust')openAdjust(t.dataset.id);
+  else if(a==='adj-step')stepAdj(Number(t.dataset.i),Number(t.dataset.d));
+  else if(a==='adj-save')saveAdj();
+  else if(a==='adj-reset')resetAdj();
   else if(a==='fix-route')pickRoute(t.dataset.route);
   else if(a==='apply-swaps')applySwaps();
   else if(a==='undo-swaps')undoSwaps();
@@ -1179,6 +1254,9 @@ document.addEventListener('change',function(e){
   if(e.target&&e.target.id==='swapRecent'&&swapState)openSwap(swapState.i,e.target.checked);
   if(e.target&&e.target.dataset&&e.target.dataset.have!==undefined)toggleHave(Number(e.target.dataset.have),e.target.checked);
   if(e.target&&e.target.dataset&&e.target.dataset.swap!==undefined)updateApplyBtn();
+});
+document.addEventListener('input',function(e){
+  if(e.target&&e.target.dataset&&e.target.dataset.adj!==undefined)refreshAdj();
 });
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'&&$('modal').firstChild)closeModal();
